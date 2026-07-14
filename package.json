@@ -7,6 +7,7 @@
   "license": "MIT",
   "keywords": ["pi-package", "pi-extension"],
   "scripts": {
+    "build:comment-checker": "bash scripts/build-comment-checker.sh",
     "check": "npm run typecheck && npm test",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test 'extensions/**/*.test.mjs'"
@@ -15,7 +16,8 @@
     "extensions": [
       "./extensions/multi-skills/index.ts",
       "./extensions/todo/index.ts",
-      "./extensions/btw/index.ts"
+      "./extensions/btw/index.ts",
+      "./extensions/comment-checker/index.ts"
     ]
   },
   "peerDependencies": {
