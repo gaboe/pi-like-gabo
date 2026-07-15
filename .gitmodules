@@ -1,0 +1,3 @@
+[submodule "vendor/my-pi-setup"]
+	path = vendor/my-pi-setup
+	url = https://github.com/davis7dotsh/my-pi-setup.git

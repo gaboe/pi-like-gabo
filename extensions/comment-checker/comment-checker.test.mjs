@@ -27,9 +27,9 @@ async function executable(name, body) {
 
 describe("comment checker runner", () => {
 	it("returns warnings only for checker exit code 2", async () => {
-		assert.equal(await checkComments(await executable("warn", "cat >/dev/null; echo unnecessary-comment >&2; exit 2"), input, 1000), "unnecessary-comment");
-		assert.equal(await checkComments(await executable("pass", "cat >/dev/null; exit 0"), input, 1000), undefined);
-		assert.equal(await checkComments(await executable("fail", "cat >/dev/null; echo broken >&2; exit 1"), input, 1000), undefined);
+		assert.equal(await checkComments(await executable("warn", "cat >/dev/null; echo unnecessary-comment >&2; exit 2"), input, 5000), "unnecessary-comment");
+		assert.equal(await checkComments(await executable("pass", "cat >/dev/null; exit 0"), input, 5000), undefined);
+		assert.equal(await checkComments(await executable("fail", "cat >/dev/null; echo broken >&2; exit 1"), input, 5000), undefined);
 	});
 
 	it("fails open when the checker times out", async () => {

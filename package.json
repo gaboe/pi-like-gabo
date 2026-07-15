@@ -8,6 +8,7 @@
   "keywords": ["pi-package", "pi-extension"],
   "scripts": {
     "build:comment-checker": "bash scripts/build-comment-checker.sh",
+    "setup:ben": "bash scripts/setup-ben-plugins.sh",
     "check": "npm run typecheck && npm test",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test 'extensions/**/*.test.mjs'"
@@ -17,8 +18,18 @@
       "./extensions/multi-skills/index.ts",
       "./extensions/todo/index.ts",
       "./extensions/btw/index.ts",
-      "./extensions/comment-checker/index.ts"
-    ]
+      "./extensions/comment-checker/index.ts",
+      "./vendor/my-pi-setup/extensions/ask-user/index.ts",
+      "./vendor/my-pi-setup/extensions/copy-all/index.ts",
+      "./vendor/my-pi-setup/extensions/firecrawl-search/index.ts",
+      "./vendor/my-pi-setup/extensions/git-info/index.ts",
+      "./vendor/my-pi-setup/extensions/model-info/index.ts",
+      "./vendor/my-pi-setup/extensions/subagents/index.ts",
+      "./vendor/my-pi-setup/extensions/ui-customization/index.ts",
+      "./vendor/my-pi-setup/extensions/workflows/index.ts"
+    ],
+    "skills": ["./vendor/my-pi-setup/skills/subagents"],
+    "themes": ["./vendor/my-pi-setup/themes/github-dark-default.json"]
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
