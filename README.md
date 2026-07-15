@@ -1,11 +1,12 @@
 # pi-plugins
 
-Locally owned Pi package containing three reviewed extensions:
+Locally owned Pi package containing reviewed extensions:
 
 - `multi-skills`: inline `$skill-name` expansion and discovery
 - `todo`: persistent task tool and overlay
 - `btw`: parallel `/btw` side conversations
 - `comment-checker`: warns the agent after `edit`/`write` adds unnecessary comments
+- `pi-caveman` (pinned submodule): trims response prose; configured locally at `lite`
 - Ben Davis's complete setup (pinned submodule): cross-harness subagents, workflows, ask-user, copy-all, Firecrawl, Git/model dashboards, and TUI customization
 
 ## Security model
@@ -23,7 +24,7 @@ npm run build:comment-checker # builds pinned MIT source; no downloaded executab
 npm run check
 ```
 
-Firecrawl reads `FIRECRAWL_API_KEY` from `~/.pi/agent/.env`. Ben's upstream is pinned under `vendor/my-pi-setup`; update it only after reviewing the submodule diff.
+Firecrawl reads `FIRECRAWL_API_KEY` from `~/.pi/agent/.env`. Ben's upstream is pinned under `vendor/my-pi-setup`; Caveman is pinned under `vendor/pi-caveman`. Update either only after reviewing the submodule diff.
 
 The checker is built from `code-yeongyu/go-claude-code-comment-checker` at commit `ec3c30c1f4c51a245ab82ffca74241868f902f3f`. Its platform binary stays local under `bin/`; the SHA-256 file is tracked.
 
