@@ -36,6 +36,7 @@ Package contents:
 - `pi-orchestration`: required orchestration policy explaining how TODOs, jobs, workflows, subagents, and `grill-me` fit together
 - `orchestrator`: opt-in driver role for durable TODO planning, bounded delegation, concurrency gates, and evidence-based integration; moved from Nexus so the plugin is canonical
 - `ultrathink`: explicit `/ultrathink [task]` (or `$ultrathink`) mode for bounded multi-agent investigation, synthesis, implementation, and independent verification; without an argument it uses the current conversation task
+- `whats-next`: `/whats-next [focus]` uses one read-only Luna subagent to review completed work, forgotten commitments, and material next steps
 - `librarian`: source-backed open-source research with full-SHA GitHub permalinks
 - `thinking-shortcuts`: `Shift+Up` increases and `Shift+Down` decreases thinking level
 - `btw`: parallel `/btw` side conversations

@@ -43,6 +43,7 @@
       "./extensions/comment-checker/index.ts",
       "./extensions/thinking-shortcuts/index.ts",
       "./extensions/ultrathink/index.ts",
+      "./extensions/whats-next/index.ts",
       "./extensions/compact-tools/index.ts",
       "./extensions/decision-guidance/index.ts",
       "./extensions/shared-memory/index.ts",
