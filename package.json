@@ -1,36 +1,77 @@
 {
-  "name": "@gabrielecegi/pi-plugins",
+  "name": "pi-like-gabo",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Locally owned, reviewed Pi extensions.",
+  "description": "Gabo's reviewed extensions, skills, and orchestration tools for Pi.",
   "license": "MIT",
-  "keywords": ["pi-package", "pi-extension"],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "author": "gaboe",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gaboe/pi-like-gabo.git"
+  },
+  "homepage": "https://github.com/gaboe/pi-like-gabo#readme",
+  "bugs": {
+    "url": "https://github.com/gaboe/pi-like-gabo/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "orchestration"
+  ],
   "scripts": {
     "build:comment-checker": "bash scripts/build-comment-checker.sh",
     "setup:ben": "bash scripts/setup-ben-plugins.sh",
-    "check": "npm run typecheck && npm test",
+    "check": "npm run typecheck && npm test && npm run vendor:build:native && npm run vendor:test && npm run vendor:typecheck && npm run vendor:format:check",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test 'extensions/**/*.test.mjs'"
+    "test": "node --import tsx --test 'extensions/**/*.test.mjs'",
+    "vendor:build:native": "npm --prefix vendor/pi-tools run build:native",
+    "vendor:test": "npm --prefix vendor/pi-tools test",
+    "vendor:typecheck": "npm --prefix vendor/pi-tools run check",
+    "vendor:format:check": "npm --prefix vendor/pi-tools run format:check"
   },
   "pi": {
     "extensions": [
+      "./extensions/telemetry/index.ts",
+      "./extensions/automation-pause/index.ts",
       "./extensions/multi-skills/index.ts",
-      "./extensions/todo/index.ts",
       "./extensions/btw/index.ts",
       "./extensions/comment-checker/index.ts",
+      "./extensions/thinking-shortcuts/index.ts",
+      "./extensions/ultrathink/index.ts",
+      "./extensions/compact-tools/index.ts",
+      "./extensions/decision-guidance/index.ts",
+      "./extensions/shared-memory/index.ts",
       "./vendor/pi-caveman/extensions/caveman.ts",
-      "./vendor/my-pi-setup/extensions/ask-user/index.ts",
-      "./vendor/my-pi-setup/extensions/copy-all/index.ts",
-      "./vendor/my-pi-setup/extensions/firecrawl-search/index.ts",
-      "./vendor/my-pi-setup/extensions/git-info/index.ts",
-      "./vendor/my-pi-setup/extensions/model-info/index.ts",
-      "./vendor/my-pi-setup/extensions/subagents/index.ts",
-      "./vendor/my-pi-setup/extensions/ui-customization/index.ts",
-      "./vendor/my-pi-setup/extensions/workflows/index.ts"
+      "./vendor/pi-tools/extensions/ask-user/index.ts",
+      "./vendor/pi-tools/extensions/background-terminals/index.ts",
+      "./extensions/jobs/index.ts",
+      "./extensions/todo/index.ts",
+      "./vendor/pi-tools/extensions/copy-all/index.ts",
+      "./vendor/pi-tools/extensions/file-search/index.ts",
+      "./vendor/pi-tools/extensions/firecrawl-search/index.ts",
+      "./vendor/pi-tools/extensions/model-info/index.ts",
+      "./vendor/pi-tools/extensions/subagents/index.ts",
+      "./vendor/pi-tools/extensions/summaries/index.ts",
+      "./vendor/pi-tools/extensions/ui-customization/index.ts",
+      "./vendor/pi-tools/extensions/workflows/index.ts",
+      "./extensions/fleet/index.ts"
     ],
-    "skills": ["./vendor/my-pi-setup/skills/subagents"],
-    "themes": ["./vendor/my-pi-setup/themes/github-dark-default.json"]
+    "skills": [
+      "./skills/pi-orchestration",
+      "./skills/orchestrator",
+      "./skills/ultrathink",
+      "./skills/librarian",
+      "./vendor/pi-tools/skills/background-terminals",
+      "./vendor/pi-tools/skills/subagents"
+    ],
+    "themes": [
+      "./vendor/pi-tools/themes/github-dark-default.json"
+    ]
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
@@ -39,12 +80,19 @@
     "typebox": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.80.6",
-    "@earendil-works/pi-coding-agent": "0.80.6",
-    "@earendil-works/pi-tui": "0.80.6",
-    "@types/node": "24.10.1",
-    "tsx": "4.21.0",
-    "typebox": "1.1.38",
-    "typescript": "6.0.2"
+    "@earendil-works/pi-ai": "^0.82.0",
+    "@earendil-works/pi-coding-agent": "^0.82.0",
+    "@earendil-works/pi-tui": "^0.82.0",
+    "@types/node": "^26.1.1",
+    "@types/ws": "^8.18.1",
+    "tsx": "4.23.1",
+    "typebox": "^1.3.6",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "jsonpath-plus": "^10.4.0",
+    "re2js": "^2.8.6",
+    "undici": "^8.7.0",
+    "ws": "^8.21.1"
   }
 }

@@ -1,0 +1,24 @@
+{
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.82.0",
+    "@earendil-works/pi-coding-agent": "^0.82.0",
+    "@earendil-works/pi-tui": "^0.82.0",
+    "acorn": "^8.17.0",
+    "firecrawl": "^4.30.0",
+    "typebox": "^1.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "prettier": "^3.9.5",
+    "typescript": "^7.0.2"
+  },
+  "type": "module",
+  "scripts": {
+    "build:native": "node extensions/subagents/scripts/build-native.mjs",
+    "postinstall": "npm run build:native",
+    "check": "tsc --noEmit",
+    "format": "prettier --write \"extensions/**/*.{ts,cjs}\" \"*.json\"",
+    "format:check": "prettier --check \"extensions/**/*.{ts,cjs}\" \"*.json\"",
+    "test": "node --test --experimental-strip-types extensions/{ask-user,background-terminals,firecrawl-search,model-info,shared,subagents,summaries,ui-customization,workflows}/*.test.ts && npm --prefix extensions/file-search test"
+  }
+}

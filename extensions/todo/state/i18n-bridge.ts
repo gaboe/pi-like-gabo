@@ -6,5 +6,6 @@ export function t(_key: string, fallback: string): string {
 }
 
 export function formatStatusLabel(status: TaskStatus): string {
-	return status === "in_progress" ? "in progress" : status;
+	if (status === "in_progress") return "in progress";
+	return status.replace(":", ": ");
 }

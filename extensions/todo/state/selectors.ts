@@ -14,6 +14,8 @@ export function selectVisibleTasks(state: TaskState): readonly Task[] {
 export interface TasksByStatus {
 	pending: readonly Task[];
 	inProgress: readonly Task[];
+	waitingUser: readonly Task[];
+	waitingJobs: readonly Task[];
 	completed: readonly Task[];
 }
 export function selectTasksByStatus(state: TaskState): TasksByStatus {
@@ -21,6 +23,8 @@ export function selectTasksByStatus(state: TaskState): TasksByStatus {
 	return {
 		pending: visible.filter((t) => t.status === "pending"),
 		inProgress: visible.filter((t) => t.status === "in_progress"),
+		waitingUser: visible.filter((t) => t.status === "waiting:user"),
+		waitingJobs: visible.filter((t) => t.status === "waiting:jobs"),
 		completed: visible.filter((t) => t.status === "completed"),
 	};
 }
@@ -30,14 +34,23 @@ export interface TodoCounts {
 	total: number;
 	pending: number;
 	inProgress: number;
+	waitingUser: number;
+	waitingJobs: number;
 	completed: number;
 }
 export function selectTodoCounts(state: TaskState): TodoCounts {
 	const groups = selectTasksByStatus(state);
 	return {
-		total: groups.pending.length + groups.inProgress.length + groups.completed.length,
+		total:
+			groups.pending.length +
+			groups.inProgress.length +
+			groups.waitingUser.length +
+			groups.waitingJobs.length +
+			groups.completed.length,
 		pending: groups.pending.length,
 		inProgress: groups.inProgress.length,
+		waitingUser: groups.waitingUser.length,
+		waitingJobs: groups.waitingJobs.length,
 		completed: groups.completed.length,
 	};
 }

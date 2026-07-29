@@ -17,4 +17,4 @@ test "$(git -C "$TMP" rev-parse HEAD)" = "$REV"
 mkdir -p "$TARGET"
 cp "$TMP/target/release/comment-checker" "$TARGET/comment-checker"
 chmod 0755 "$TARGET/comment-checker"
-shasum -a 256 "$TARGET/comment-checker" | tee "$TARGET/comment-checker.sha256"
+(cd "$TARGET" && shasum -a 256 comment-checker | tee comment-checker.sha256)

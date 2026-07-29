@@ -1,0 +1,42 @@
+import { strict as assert } from "node:assert";
+import { it } from "node:test";
+import { aggregateOrchestratorMode, classifyOrchestration, markOrchestrator, modeFor, orchestratorFooterStatus, orchestratorStatus, requestOrchestratorClassification, stickyOrchestrator } from "./orchestrator.ts";
+import { registerBackgroundSubagentService } from "../../vendor/pi-tools/extensions/shared/background-subagent-protocol.ts";
+
+it("classifies structural signals, preserves off, and makes execution sticky", () => {
+  const classified = classifyOrchestration("Delegate independent parallel work packages with durable handoff");
+  assert.equal(classified.requiresOrchestration, true);
+  assert.equal(modeFor("off", classified), "direct");
+  const provisional = markOrchestrator({ id: 1, subject: "x", status: "pending" }, "auto", classified, "raw");
+  assert.equal("setting" in provisional.metadata.orchestrator, false);
+  const sticky = stickyOrchestrator(provisional);
+  assert.equal(sticky.metadata.orchestrator.mode, "sticky");
+  assert.match(orchestratorStatus([sticky], "auto"), /auto\/sticky/);
+  assert.equal(orchestratorFooterStatus([sticky], "auto"), "orchestrator: sticky");
+  assert.equal(orchestratorFooterStatus([], "auto"), undefined);
+});
+
+it("does not use step count as a classifier signal", () => {
+  assert.equal(classifyOrchestration("Do task", { steps: ["one", "two", "three", "four"] }).requiresOrchestration, false);
+});
+
+it("calls the classifier for raw and prepared dossiers", async () => {
+  const calls = [];
+  const unregister = registerBackgroundSubagentService({ async run(request) { calls.push(request); return { id: "classifier", status: "done", output: '{"requiresOrchestration":false,"signals":[]}' }; } });
+  try {
+    const ctx = { cwd: "/repo", isProjectTrusted: () => true, modelRegistry: {} };
+    await requestOrchestratorClassification(ctx, "raw request");
+    await requestOrchestratorClassification(ctx, "raw request", { affectedPaths: ["a"], steps: ["x"] });
+    assert.equal(calls.length, 2);
+    assert.match(calls[1].prompt, /Prepared dossier/);
+  } finally { unregister(); }
+});
+
+it("aggregates unresolved classifications, ignores stale/terminal work, and keeps sticky with zero tasks", () => {
+  const complex = markOrchestrator({ id: 1, subject: "x", status: "pending" }, "auto", { requiresOrchestration: true, signals: ["package"] }, "raw");
+  const direct = markOrchestrator({ id: 2, subject: "y", status: "pending" }, "auto", { requiresOrchestration: false, signals: [] }, "raw");
+  assert.equal(aggregateOrchestratorMode([complex, direct], "auto"), "provisional");
+  assert.equal(aggregateOrchestratorMode([{ ...complex, status: "completed" }], "auto"), "direct");
+  assert.equal(aggregateOrchestratorMode([], "auto", true), "sticky");
+  assert.equal(aggregateOrchestratorMode([complex], "off", true), "direct");
+});

@@ -91,7 +91,15 @@ export class TodoOverlay {
 			this.hiddenCompletedTaskIds.add(taskId);
 		}
 		this.completedTaskIdsPendingHide.clear();
-		this.tui?.requestRender();
+		this.update();
+	}
+
+	hideAllCompletedTasks(): void {
+		for (const task of getState().tasks) {
+			if (task.status === "completed") this.hiddenCompletedTaskIds.add(task.id);
+		}
+		this.completedTaskIdsPendingHide.clear();
+		this.update();
 	}
 
 	private getSnapshot() {
@@ -125,7 +133,7 @@ export class TodoOverlay {
 		const overlayTasks = this.selectOverlayTasks(snapshot);
 		if (overlayTasks.length === 0) return [];
 
-		const overlayState = { tasks: overlayTasks, nextId: snapshot.nextId };
+		const overlayState = { tasks: overlayTasks, nextId: snapshot.nextId, revision: 0 };
 		const truncate = (line: string): string => truncateToWidth(line, width, "…");
 		const counts = selectTodoCounts(overlayState);
 		const hasActive = selectHasActive(overlayState);

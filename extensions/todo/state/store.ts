@@ -6,7 +6,8 @@ import { EMPTY_STATE, type TaskState } from "./state.js";
  * `nextId` consts in `todo.ts`; centralizing here keeps the store as the
  * single mutation seam and lets the reducer remain pure.
  */
-let state: TaskState = { tasks: [...EMPTY_STATE.tasks], nextId: EMPTY_STATE.nextId };
+let state: TaskState = { tasks: [...EMPTY_STATE.tasks], nextId: EMPTY_STATE.nextId, revision: EMPTY_STATE.revision };
+const listeners = new Set<(previous: TaskState, next: TaskState) => void>();
 
 /**
  * Live tasks accessor. Returned `readonly Task[]` so callers (overlay render
@@ -41,7 +42,18 @@ export function replaceState(next: TaskState): void {
  * `/todos`, renderCall).
  */
 export function commitState(next: TaskState): void {
-	state = next;
+	const previous = state;
+	state = next.orchestrator || !previous.orchestrator ? next : { ...next, orchestrator: previous.orchestrator };
+	for (const listener of [...listeners]) {
+		try {
+			listener(previous, next);
+		} catch {}
+	}
+}
+
+export function subscribeState(listener: (previous: TaskState, next: TaskState) => void): () => void {
+	listeners.add(listener);
+	return () => listeners.delete(listener);
 }
 
 /**
@@ -50,5 +62,5 @@ export function commitState(next: TaskState): void {
  * Plan §Decisions §Decision 7.
  */
 export function __resetState(): void {
-	state = { tasks: [...EMPTY_STATE.tasks], nextId: EMPTY_STATE.nextId };
+	state = { tasks: [...EMPTY_STATE.tasks], nextId: EMPTY_STATE.nextId, revision: EMPTY_STATE.revision };
 }

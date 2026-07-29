@@ -2,3 +2,14 @@ node_modules/
 bin/*/comment-checker
 *.log
 .DS_Store
+scratchpad/
+.env
+.env.*
+!.env.example
+.envrc
+credentials*
+secrets*
+*.pem
+*.key
+*.p12
+*.pfx

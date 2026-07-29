@@ -1,4 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { Task, TaskAction, TaskMutationParams, TaskStatus } from "../tool/types.js";
+import { isTaskArchivable } from "./completion.js";
 import { isTransitionValid } from "./invariants.js";
 import type { TaskState } from "./state.js";
 import { detectCycle } from "./task-graph.js";
@@ -26,8 +29,60 @@ export interface ApplyResult {
 	op: Op;
 }
 
+export const MIN_JOB_TIMEOUT_SECONDS = 1;
+export const MAX_JOB_TIMEOUT_SECONDS = 86_400;
+
+function nextRevision(state: TaskState): number {
+	return (state.revision ?? 0) + 1;
+}
+
+function normalizeQuestions(value: string[] | undefined): string[] | undefined {
+	if (!value || value.length < 1 || value.length > 8) return undefined;
+	const questions = value.map((question) => question.trim());
+	return questions.every(Boolean) && new Set(questions).size === questions.length ? questions : undefined;
+}
+
 function errorResult(state: TaskState, message: string): ApplyResult {
 	return { state, op: { kind: "error", message } };
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? value as Record<string, unknown>
+		: undefined;
+}
+
+function scopeChanged(
+	current: Task,
+	updated: Task,
+	params: TaskMutationParams,
+): boolean {
+	if (params.subject !== undefined && current.subject !== updated.subject) return true;
+	if (params.description !== undefined && current.description !== updated.description) return true;
+	const dependencies = (task: Task) => [...new Set(task.blockedBy ?? [])].sort((a, b) => a - b);
+	if (!isDeepStrictEqual(dependencies(current), dependencies(updated))) return true;
+	if (!params.metadata) return false;
+	return Object.keys(params.metadata).some((key) =>
+		!isDeepStrictEqual(current.metadata?.[key], updated.metadata?.[key]),
+	);
+}
+
+function rotateIncarnation(
+	state: TaskState,
+	current: Task,
+	updated: Task,
+	createToken: () => string,
+): void {
+	const previous = record(current.metadata?.preparation);
+	const metadata = { ...updated.metadata };
+	metadata.preparation = {
+		status: "queued",
+		version: typeof previous?.version === "number" ? previous.version + 1 : 1,
+		token: createToken(),
+		sourceRevision: nextRevision(state),
+	};
+	delete metadata.delegation;
+	updated.metadata = metadata;
 }
 
 /**
@@ -41,7 +96,13 @@ function errorResult(state: TaskState, message: string): ApplyResult {
  * dangling/deleted blockedBy, self-block, cycles). Decision: validation stays
  * in-reducer — see Plan §Decisions §Decision 2.
  */
-export function applyTaskMutation(state: TaskState, action: TaskAction, params: TaskMutationParams): ApplyResult {
+export function applyTaskMutation(
+	state: TaskState,
+	action: TaskAction,
+	params: TaskMutationParams,
+	now = Date.now(),
+	createToken = randomUUID,
+): ApplyResult {
 	switch (action) {
 		case "create": {
 			if (!params.subject?.trim()) {
@@ -67,7 +128,7 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 
 			const newTasks = [...state.tasks, newTask];
 			return {
-				state: { tasks: newTasks, nextId: state.nextId + 1 },
+				state: { ...state, tasks: newTasks, nextId: state.nextId + 1, revision: nextRevision(state) },
 				op: { kind: "create", taskId: newTask.id },
 			};
 		}
@@ -85,6 +146,10 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 				params.status !== undefined ||
 				params.owner !== undefined ||
 				params.metadata !== undefined ||
+				params.questions !== undefined ||
+				params.jobIds !== undefined ||
+				params.jobMode !== undefined ||
+				params.timeoutSeconds !== undefined ||
 				(params.addBlockedBy && params.addBlockedBy.length > 0) ||
 				(params.removeBlockedBy && params.removeBlockedBy.length > 0);
 			if (!hasMutation) return errorResult(state, "update requires at least one mutable field");
@@ -94,7 +159,58 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 				if (!isTransitionValid(current.status, params.status)) {
 					return errorResult(state, `illegal transition ${current.status} → ${params.status}`);
 				}
+				if (params.status === "completed" && current.wait?.kind === "jobs") {
+					return errorResult(state, "cannot complete while a jobs wait remains active");
+				}
 				newStatus = params.status;
+			}
+
+			let wait = current.wait;
+			if (newStatus === "waiting:user") {
+				const questions = normalizeQuestions(params.questions ?? (wait?.kind === "user" ? wait.questions : undefined));
+				if (!questions) return errorResult(state, "waiting:user requires 1-8 unique non-empty questions");
+				wait = { kind: "user", questions };
+			} else if (newStatus === "waiting:jobs") {
+				const previous = wait?.kind === "jobs" ? wait : undefined;
+				const reconfigure =
+					!previous ||
+					params.jobIds !== undefined ||
+					params.jobMode !== undefined ||
+					params.timeoutSeconds !== undefined;
+				if (!reconfigure) {
+					wait = previous;
+				} else {
+					const jobIds = params.jobIds ?? previous?.jobIds;
+					const mode = params.jobMode ?? previous?.mode;
+					const timeoutSeconds = params.timeoutSeconds;
+					if (!jobIds?.length || new Set(jobIds).size !== jobIds.length || jobIds.some((id) => !id.trim())) {
+						return errorResult(state, "waiting:jobs requires unique non-empty jobIds");
+					}
+					if (!mode) return errorResult(state, "waiting:jobs requires jobMode all or any");
+					if (
+						timeoutSeconds === undefined ||
+						!Number.isInteger(timeoutSeconds) ||
+						timeoutSeconds < MIN_JOB_TIMEOUT_SECONDS ||
+						timeoutSeconds > MAX_JOB_TIMEOUT_SECONDS
+					) {
+						return errorResult(
+							state,
+							`waiting:jobs requires timeoutSeconds ${MIN_JOB_TIMEOUT_SECONDS}-${MAX_JOB_TIMEOUT_SECONDS}`,
+						);
+					}
+					wait = {
+						kind: "jobs",
+						jobIds: [...jobIds],
+						mode,
+						deadline: now + timeoutSeconds * 1000,
+						settled: {},
+					};
+				}
+			} else {
+				if (params.questions || params.jobIds || params.jobMode || params.timeoutSeconds !== undefined) {
+					return errorResult(state, "wait fields require status waiting:user or waiting:jobs");
+				}
+				wait = undefined;
 			}
 
 			let newBlockedBy = current.blockedBy ? [...current.blockedBy] : [];
@@ -134,11 +250,21 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 			else delete updated.blockedBy;
 			if (newMetadata === undefined) delete updated.metadata;
 			else updated.metadata = newMetadata;
+			if (wait) updated.wait = wait;
+			else delete updated.wait;
+			if (newStatus === "waiting:user" || newStatus === "waiting:jobs") delete updated.waitEvidence;
+			if (scopeChanged(current, updated, params)) rotateIncarnation(state, current, updated, createToken);
 
+			if (isDeepStrictEqual(updated, current)) {
+				return {
+					state,
+					op: { kind: "update", id: current.id, fromStatus: current.status, toStatus: current.status },
+				};
+			}
 			const newTasks = [...state.tasks];
 			newTasks[idx] = updated;
 			return {
-				state: { tasks: newTasks, nextId: state.nextId },
+				state: { ...state, tasks: newTasks, revision: nextRevision(state) },
 				op: { kind: "update", id: updated.id, fromStatus: current.status, toStatus: newStatus },
 			};
 		}
@@ -168,18 +294,29 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 			const current = state.tasks[idx];
 			if (current.status === "deleted") return errorResult(state, `#${current.id} is already deleted`);
 			const updated: Task = { ...current, status: "deleted" };
+			delete updated.wait;
 			const newTasks = [...state.tasks];
 			newTasks[idx] = updated;
 			return {
-				state: { tasks: newTasks, nextId: state.nextId },
+				state: { ...state, tasks: newTasks, revision: nextRevision(state) },
 				op: { kind: "delete", id: updated.id, subject: updated.subject },
 			};
 		}
 
 		case "clear": {
-			const count = state.tasks.length;
+			const unresolved = state.tasks.filter(
+				(task) => task.status !== "deleted" && !isTaskArchivable(task),
+			);
+			if (unresolved.length > 0) {
+				return errorResult(state, `clear requires all visible tasks completed with owned work settled; unresolved: ${unresolved.map((task) => `#${task.id}`).join(", ")}`);
+			}
+			const count = state.tasks.filter(isTaskArchivable).length;
+			if (count === 0) return { state, op: { kind: "clear", count } };
+			const archived = state.tasks.map((task) =>
+				isTaskArchivable(task) ? { ...task, status: "deleted" as const } : task,
+			);
 			return {
-				state: { tasks: [], nextId: 1 },
+				state: { ...state, tasks: archived, revision: nextRevision(state) },
 				op: { kind: "clear", count },
 			};
 		}

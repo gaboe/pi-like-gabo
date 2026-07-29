@@ -23,7 +23,33 @@ export const MSG_NO_TODOS = "No todos yet. Ask the agent to add some!";
 // Public domain types
 // ---------------------------------------------------------------------------
 
-export type TaskStatus = "pending" | "in_progress" | "completed" | "deleted";
+export type TaskStatus = "pending" | "in_progress" | "waiting:user" | "waiting:jobs" | "completed" | "deleted";
+
+export type JobStatus = "running" | "wake" | "succeeded" | "failed" | "killed" | "timed_out";
+
+export interface JobStateEvent {
+	id: string;
+	status: JobStatus;
+	settledAt?: number | string;
+	error?: string;
+}
+
+export interface JobWaitEvidence {
+	id: string;
+	status: Exclude<JobStatus, "running">;
+	settledAt?: number;
+	error?: string;
+}
+
+export type TaskWait =
+	| { kind: "user"; questions: string[] }
+	| {
+			kind: "jobs";
+			jobIds: string[];
+			mode: "all" | "any";
+			deadline: number;
+			settled: Record<string, JobWaitEvidence>;
+	  };
 
 export type TaskAction = "create" | "update" | "list" | "get" | "delete" | "clear";
 
@@ -36,19 +62,18 @@ export interface Task {
 	blockedBy?: number[];
 	owner?: string;
 	metadata?: Record<string, unknown>;
+	wait?: TaskWait;
+	waitEvidence?: JobWaitEvidence[];
 }
 
 /**
- * Persistence + replay snapshot. Every successful `todo` tool call returns this
- * shape under `details`; `state/replay.ts` reads the latest one from the branch
- * to reconstruct module state. Field order and field names are pinned by
- * cross-version replay compatibility.
+ * Bounded renderer projection. Versioned custom snapshots own replay; legacy
+ * tool-result snapshots remain accepted by `state/replay.ts`.
  */
 export interface TaskDetails {
 	action: TaskAction;
-	params: Record<string, unknown>;
-	tasks: Task[];
-	nextId: number;
+	params: Pick<TaskMutationParams, "status" | "addBlockedBy" | "removeBlockedBy">;
+	task?: Pick<Task, "status">;
 	error?: string;
 }
 
@@ -70,6 +95,10 @@ export interface TaskMutationParams {
 	metadata?: Record<string, unknown>;
 	id?: number;
 	includeDeleted?: boolean;
+	questions?: string[];
+	jobIds?: string[];
+	jobMode?: "all" | "any";
+	timeoutSeconds?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,8 +117,34 @@ export const TodoParamsSchema = Type.Object({
 		}),
 	),
 	status: Type.Optional(
-		StringEnum(["pending", "in_progress", "completed", "deleted"] as const, {
+		StringEnum(["pending", "in_progress", "waiting:user", "waiting:jobs", "completed", "deleted"] as const, {
 			description: "Target status (update) or list filter (list)",
+		}),
+	),
+	questions: Type.Optional(
+		Type.Array(Type.String({ minLength: 1, maxLength: 500 }), {
+			minItems: 1,
+			maxItems: 8,
+			description: "Exact concrete questions required when setting status to waiting:user (1-8)",
+		}),
+	),
+	jobIds: Type.Optional(
+		Type.Array(Type.String({ minLength: 1, maxLength: 200 }), {
+			minItems: 1,
+			maxItems: 64,
+			description: "Unique running job ids required when setting status to waiting:jobs",
+		}),
+	),
+	jobMode: Type.Optional(
+		StringEnum(["all", "any"] as const, {
+			description: "Wake after all linked jobs settle or after any linked job settles",
+		}),
+	),
+	timeoutSeconds: Type.Optional(
+		Type.Integer({
+			minimum: 1,
+			maximum: 86400,
+			description: "Bounded relative timeout in seconds for waiting:jobs (1-86400); the extension owns the deadline",
 		}),
 	),
 	blockedBy: Type.Optional(

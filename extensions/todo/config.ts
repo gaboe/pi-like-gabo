@@ -9,6 +9,7 @@ export interface GuidanceFields {
 
 interface TodoConfig {
 	guidance?: GuidanceFields;
+	orchestrator?: { enabled?: boolean };
 }
 
 export function loadConfig(): TodoConfig {
@@ -18,6 +19,10 @@ export function loadConfig(): TodoConfig {
 	} catch {
 		return {};
 	}
+}
+
+export function orchestratorEnabled(value: unknown): boolean {
+	return Boolean(value && typeof value === "object" && (value as { orchestrator?: { enabled?: unknown } }).orchestrator?.enabled === true);
 }
 
 export function validateGuidanceFields(value: unknown): GuidanceFields {

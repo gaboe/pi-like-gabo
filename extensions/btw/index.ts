@@ -12,6 +12,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type AssistantMessage, type Message, type ThinkingLevel as AiThinkingLevel, type UserMessage } from "@earendil-works/pi-ai";
 import {
+  registerUnconstrainedWorkspaceWorker,
+  type WorkspaceActivity,
+} from "../../vendor/pi-tools/extensions/shared/workspace-mutation-lease.js";
+import {
   Box,
   Container,
   Input,
@@ -33,6 +37,41 @@ const BTW_RESET_TYPE = "btw-thread-reset";
 const BTW_MODEL_OVERRIDE_TYPE = "btw-model-override";
 const BTW_THINKING_OVERRIDE_TYPE = "btw-thinking-override";
 const BTW_FOCUS_SHORTCUTS = [Key.alt("/"), Key.ctrlAlt("w")] as const;
+const BTW_REFRESH_DELAY_MS = 40;
+
+type RefreshTimer = {
+  setTimeout: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
+  clearTimeout: (timer: ReturnType<typeof setTimeout>) => void;
+};
+
+export function createRefreshCoalescer(
+  refresh: () => void,
+  delay = BTW_REFRESH_DELAY_MS,
+  timer: RefreshTimer = globalThis,
+): { request: () => void; flush: () => void } {
+  let pending: ReturnType<typeof setTimeout> | undefined;
+  const cancel = () => {
+    if (pending !== undefined) {
+      timer.clearTimeout(pending);
+      pending = undefined;
+    }
+  };
+  const flush = () => {
+    cancel();
+    refresh();
+  };
+  return {
+    request: () => {
+      if (pending === undefined) {
+        pending = timer.setTimeout(() => {
+          pending = undefined;
+          refresh();
+        }, delay);
+      }
+    },
+    flush,
+  };
+}
 
 function matchesBtwFocusShortcut(data: string): boolean {
   return BTW_FOCUS_SHORTCUTS.some((shortcut) => matchesKey(data, shortcut));
@@ -140,6 +179,7 @@ type BtwTranscriptState = {
 
 type BtwSessionRuntime = {
   session: AgentSession;
+  workspaceWorker: WorkspaceActivity;
   mode: BtwThreadMode;
   subscriptions: Set<() => void>;
   sideThreadStartIndex: number;
@@ -1323,13 +1363,26 @@ export default function (pi: ExtensionAPI) {
   let overlayRuntime: OverlayRuntime | null = null;
   let lastUiContext: ExtensionContext | ExtensionCommandContext | null = null;
   let activeBtwSession: BtwSessionRuntime | null = null;
-
-  function syncUi(ctx?: ExtensionContext | ExtensionCommandContext): void {
-    const activeCtx = ctx ?? lastUiContext;
+  const refreshUi = createRefreshCoalescer(() => {
+    const activeCtx = lastUiContext;
     if (activeCtx?.hasUI) {
       activeCtx.ui.setWidget("btw", undefined);
       overlayRuntime?.refresh?.();
     }
+  });
+
+  function syncUi(ctx?: ExtensionContext | ExtensionCommandContext): void {
+    if (ctx) {
+      lastUiContext = ctx;
+    }
+    refreshUi.flush();
+  }
+
+  function scheduleUi(ctx?: ExtensionContext | ExtensionCommandContext): void {
+    if (ctx) {
+      lastUiContext = ctx;
+    }
+    refreshUi.request();
   }
 
   function setOverlayStatus(status: string | null, ctx?: ExtensionContext | ExtensionCommandContext): void {
@@ -1343,6 +1396,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   function dismissOverlay(): void {
+    refreshUi.flush();
     overlayRuntime?.close?.();
     overlayRuntime = null;
   }
@@ -1417,12 +1471,12 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    if (
-      event.type === "message_start" ||
-      event.type === "message_update" ||
-      event.type === "message_end" ||
-      event.type === "turn_start"
-    ) {
+    if (event.type === "message_update") {
+      scheduleUi(ctx);
+      return;
+    }
+
+    if (event.type === "message_start" || event.type === "message_end" || event.type === "turn_start") {
       syncUi(ctx);
     }
   }
@@ -1446,6 +1500,7 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
+    refreshUi.flush();
     clearBtwSessionSubscriptions(current);
 
     try {
@@ -1454,7 +1509,11 @@ export default function (pi: ExtensionAPI) {
       // Ignore abort errors during BTW session replacement/shutdown.
     }
 
-    current.session.dispose();
+    try {
+      current.session.dispose();
+    } finally {
+      current.workspaceWorker.close();
+    }
   }
 
   async function dismissOverlaySession(): Promise<void> {
@@ -1597,22 +1656,41 @@ export default function (pi: ExtensionAPI) {
       throw new Error(settings.fallbackReason || "No active model selected.");
     }
 
-    const { session } = await createAgentSession({
-      sessionManager: SessionManager.inMemory(),
-      model: settings.model,
-      modelRegistry: ctx.modelRegistry as AgentSession["modelRegistry"],
-      thinkingLevel: settings.thinkingLevel,
-      // Match pi's default coding-agent toolset (read/bash/edit/write).
-      tools: ["read", "bash", "edit", "write"],
-      resourceLoader: createBtwResourceLoader(ctx),
-    });
-
-    const { messages: seedMessages, sideThreadStartIndex } = buildBtwSeedState(ctx, pendingThread, mode, settings.model);
-    if (seedMessages.length > 0) {
-      session.agent.state.messages = seedMessages as typeof session.state.messages;
+    const workspaceWorker = registerUnconstrainedWorkspaceWorker();
+    let session: AgentSession | undefined;
+    try {
+      ({ session } = await createAgentSession({
+        sessionManager: SessionManager.inMemory(),
+        model: settings.model,
+        thinkingLevel: settings.thinkingLevel,
+        // Match pi's default coding-agent toolset (read/bash/edit/write).
+        tools: ["read", "bash", "edit", "write"],
+        resourceLoader: createBtwResourceLoader(ctx),
+      }));
+      const { messages: seedMessages, sideThreadStartIndex } = buildBtwSeedState(ctx, pendingThread, mode, settings.model);
+      if (seedMessages.length > 0) {
+        session.agent.state.messages = seedMessages as typeof session.state.messages;
+      }
+      return {
+        session,
+        workspaceWorker,
+        mode,
+        subscriptions: new Set(),
+        sideThreadStartIndex,
+      };
+    } catch (error) {
+      try {
+        if (session) {
+          try {
+            await session.abort();
+          } catch {}
+          session.dispose();
+        }
+      } finally {
+        workspaceWorker.close();
+      }
+      throw error;
     }
-
-    return { session, mode, subscriptions: new Set(), sideThreadStartIndex };
   }
 
   async function ensureBtwSession(ctx: ExtensionCommandContext, mode: BtwThreadMode): Promise<BtwSessionRuntime | null> {
@@ -1644,6 +1722,7 @@ export default function (pi: ExtensionAPI) {
 
     const runtime: OverlayRuntime = {};
     const closeRuntime = () => {
+      refreshUi.flush();
       if (runtime.closed) {
         return;
       }
@@ -2156,7 +2235,6 @@ export default function (pi: ExtensionAPI) {
     const { session } = await createAgentSession({
       sessionManager: SessionManager.inMemory(),
       model,
-      modelRegistry: ctx.modelRegistry as AgentSession["modelRegistry"],
       thinkingLevel: "off",
       tools: [],
       resourceLoader: createBtwResourceLoader(ctx, [BTW_SUMMARIZE_SYSTEM_PROMPT]),

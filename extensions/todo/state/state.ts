@@ -13,6 +13,8 @@ import type { Task } from "../tool/types.js";
 export interface TaskState {
 	tasks: Task[];
 	nextId: number;
+	revision: number;
+	orchestrator?: { setting: "on" | "off" | "auto"; sticky?: boolean };
 }
 
-export const EMPTY_STATE: TaskState = { tasks: [], nextId: 1 };
+export const EMPTY_STATE: TaskState = { tasks: [], nextId: 1, revision: 0 };
