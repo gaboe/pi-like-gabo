@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { convertToLlm, SessionManager } from "@earendil-works/pi-coding-agent";
 import compactTools from "./index.ts";
-import { boundToolResultContext, MAX_TOOL_RESULT_TEXT_CHARS } from "./context-budget.ts";
+import {
+  boundToolResultContext,
+  boundToolResultHistory,
+  MAX_TOOL_HISTORY_TEXT_CHARS,
+  MAX_TOOL_RESULT_TEXT_CHARS,
+} from "./context-budget.ts";
 import { buildToolResult } from "../todo/tool/response-envelope.ts";
 import { createTodoSnapshot } from "../todo/state/replay.ts";
 
@@ -20,10 +25,112 @@ test("registers context budgeting independently of compact display state", () =>
   assert.ok(context({ messages: [source] }).messages[0].content[0].text.length <= MAX_TOOL_RESULT_TEXT_CHARS);
 });
 
+test("automatically compacts once above 100k tokens and rearms below 80k", async () => {
+  let turnEnd;
+  let sessionStart;
+  let tokens = 100_001;
+  let compactions = 0;
+  let compactOptions;
+  compactTools({
+    on(name, handler) {
+      if (name === "turn_end") turnEnd = handler;
+      if (name === "session_start") sessionStart = handler;
+    },
+    registerCommand() {},
+    registerEntryRenderer() {},
+    appendEntry() {},
+  });
+  const ctx = {
+    getContextUsage: () => ({ tokens }),
+    compact: (options) => {
+      compactions++;
+      compactOptions = options;
+    },
+  };
+
+  turnEnd({}, ctx);
+  turnEnd({}, ctx);
+  assert.equal(compactions, 1);
+  compactOptions.onError(new Error("failed"));
+  turnEnd({}, ctx);
+  assert.equal(compactions, 2);
+  tokens = 80_000;
+  turnEnd({}, ctx);
+  tokens = 100_001;
+  turnEnd({}, ctx);
+  assert.equal(compactions, 3);
+  await sessionStart({}, {
+    ...ctx,
+    cwd: "/tmp",
+    ui: { theme: {} },
+    sessionManager: { getBranch: () => [] },
+  });
+  turnEnd({}, ctx);
+  assert.equal(compactions, 4);
+});
+
+const historyToolChars = (messages) => messages
+  .filter((message) => message.role === "toolResult")
+  .reduce((total, message) => total + providerChars(message.content), 0);
+
+test("bounds aggregate tool history while preserving recent results and transcript source", () => {
+  const nonTool = { role: "user", content: [{ type: "text", text: "keep me" }] };
+  const messages = [nonTool, ...Array.from({ length: 40 }, (_, index) => ({
+    role: "toolResult",
+    toolCallId: `call-${index}`,
+    toolName: "read",
+    isError: index === 0,
+    details: { index },
+    content: [
+      { type: "image", data: `image-${index}`, mimeType: "image/png" },
+      { type: "text", text: `${index}:${"x".repeat(20_000)}` },
+    ],
+  }))];
+  const before = structuredClone(messages);
+  const bounded = boundToolResultHistory(messages);
+
+  assert.deepEqual(messages, before);
+  assert.ok(historyToolChars(bounded) <= MAX_TOOL_HISTORY_TEXT_CHARS);
+  assert.equal(bounded.length, messages.length);
+  assert.equal(bounded[0], nonTool);
+  assert.deepEqual(
+    bounded.map(({ toolCallId, toolName, isError, details }) => ({ toolCallId, toolName, isError, details })),
+    messages.map(({ toolCallId, toolName, isError, details }) => ({ toolCallId, toolName, isError, details })),
+  );
+  assert.deepEqual(
+    bounded.flatMap((message) => message.content ?? []).filter((block) => block.type === "image"),
+    messages.flatMap((message) => message.content ?? []).filter((block) => block.type === "image"),
+  );
+  assert.match(bounded[1].content.find((block) => block.type === "text").text, /omitted|…/);
+  assert.match(bounded.at(-1).content.find((block) => block.type === "text").text, /^39:/);
+  assert.deepEqual(boundToolResultHistory(bounded), bounded);
+});
+
 const providerChars = (content) => {
   const text = content.filter((block) => block.type === "text");
-  return text.reduce((size, block) => size + block.text.length, 0) + Math.max(0, text.length - 1);
+  const joined = text.reduce((size, block) => size + block.text.length, 0) + Math.max(0, text.length - 1);
+  if (joined > 0) return joined;
+  return content.some((block) => block.type === "image") ? "(see attached image)".length : "(no tool output)".length;
 };
+
+test("accounts for OpenAI placeholders when exhausting aggregate history", () => {
+  const messages = [
+    ...Array.from({ length: 5_000 }, (_, index) => ({
+      role: "toolResult",
+      toolCallId: `empty-${index}`,
+      content: [{ type: "text", text: "" }],
+    })),
+    ...Array.from({ length: 1_000 }, (_, index) => ({
+      role: "toolResult",
+      toolCallId: `text-${index}`,
+      content: [{ type: "text", text: "x".repeat(100) }],
+    })),
+  ];
+  const bounded = boundToolResultHistory(messages);
+
+  assert.ok(historyToolChars(bounded) <= MAX_TOOL_HISTORY_TEXT_CHARS);
+  assert.ok(bounded.some((message) => message.content[0].text === "…"));
+});
 const omitted = (content) => Number(content.find((block) => block.type === "text" && /chars omitted/.test(block.text)).text.match(/\[(\d+) chars omitted/)[1]);
 
 test("counts Pi 0.82.1 OpenAI text separators and exact source omission", () => {
@@ -40,7 +147,7 @@ test("counts Pi 0.82.1 OpenAI text separators and exact source omission", () => 
     content: Array.from({ length: 16_386 }, () => ({ type: "text", text: "" })),
   };
   const emptyBounded = boundToolResultContext(separatorsOnly);
-  assert.equal(providerChars(emptyBounded.content), 0);
+  assert.equal(providerChars(emptyBounded.content), "(no tool output)".length);
   assert.deepEqual(boundToolResultContext(emptyBounded), emptyBounded);
 
   const sparse = {

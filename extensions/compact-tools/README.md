@@ -9,5 +9,7 @@ General display-only Pi tool renderer.
 - Shows concise error output.
 - Preserves original renderers under `Ctrl+O`.
 - Reuses the same rows in subagent takeover transcripts.
+- Keeps provider-visible tool-result text under a shared 64 KiB budget, preserving newest results, non-text blocks, and the full persisted transcript.
+- Automatically compacts sessions above 100k context tokens and rearms below 80k.
 
 Use `/compact-tools on|off|toggle|status`.

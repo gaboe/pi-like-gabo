@@ -1,6 +1,8 @@
 const MAX_TOOL_RESULT_TEXT_CHARS = 16_384;
+const MAX_TOOL_HISTORY_TEXT_CHARS = 65_536;
+const OMITTED_TOOL_RESULT = "[Older tool output omitted from LLM context; full output remains in transcript]";
 
-export { MAX_TOOL_RESULT_TEXT_CHARS };
+export { MAX_TOOL_HISTORY_TEXT_CHARS, MAX_TOOL_RESULT_TEXT_CHARS };
 
 type TextBlock = { type: "text"; text: string };
 type ToolResult = { role?: string; content?: unknown; isError?: boolean };
@@ -14,7 +16,11 @@ const marker = (omitted: number) => `\n\n[${omitted} chars omitted from LLM cont
 /** Pi 0.82.1 OpenAI conversion joins every text block with one newline. */
 function providerTextChars(content: unknown[]): number {
   const text = content.filter(isTextBlock);
-  return text.reduce((size, block) => size + block.text.length, 0) + Math.max(0, text.length - 1);
+  const joinedChars = text.reduce((size, block) => size + block.text.length, 0) + Math.max(0, text.length - 1);
+  if (joinedChars > 0) return joinedChars;
+  return content.some((block) => typeof block === "object" && block !== null && (block as { type?: unknown }).type === "image")
+    ? "(see attached image)".length
+    : "(no tool output)".length;
 }
 
 export function boundToolResultContext<T extends ToolResult>(message: T): T {
@@ -69,4 +75,48 @@ export function boundToolResultContext<T extends ToolResult>(message: T): T {
     );
   }
   return { ...message, content };
+}
+
+function omitToolResult<T extends ToolResult>(message: T, text = OMITTED_TOOL_RESULT): T {
+  if (!Array.isArray(message.content)) return message;
+  let inserted = false;
+  const content = message.content.flatMap((block) => {
+    if (!isTextBlock(block)) return [block];
+    if (inserted || !text) return [];
+    inserted = true;
+    return [{ ...block, text }];
+  });
+  return { ...message, content };
+}
+
+export function boundToolResultHistory<T extends ToolResult>(messages: readonly T[]): T[] {
+  const individuallyBounded = messages.map((message) => boundToolResultContext(message));
+  const output = individuallyBounded.map((message) => {
+    if (message.role !== "toolResult" || !Array.isArray(message.content)) return message;
+    return providerTextChars(message.content) <= OMITTED_TOOL_RESULT.length ? message : omitToolResult(message);
+  });
+  let used = output.reduce(
+    (total, message) => total + (message.role === "toolResult" && Array.isArray(message.content) ? providerTextChars(message.content) : 0),
+    0,
+  );
+
+  for (let index = 0; used > MAX_TOOL_HISTORY_TEXT_CHARS && index < output.length; index++) {
+    const message = output[index];
+    if (message.role !== "toolResult" || !Array.isArray(message.content)) continue;
+    const replacement = omitToolResult(message, "…");
+    used += providerTextChars(replacement.content as unknown[]) - providerTextChars(message.content);
+    output[index] = replacement;
+  }
+
+  for (let index = output.length - 1; index >= 0; index--) {
+    const source = individuallyBounded[index];
+    const current = output[index];
+    if (source.role !== "toolResult" || !Array.isArray(source.content) || !Array.isArray(current.content)) continue;
+    const delta = providerTextChars(source.content) - providerTextChars(current.content);
+    if (delta <= MAX_TOOL_HISTORY_TEXT_CHARS - used) {
+      output[index] = source;
+      used += delta;
+    }
+  }
+  return output;
 }

@@ -31,7 +31,7 @@ export function getCompactToolRenderer(): CompactToolRendererApi | undefined {
   )[COMPACT_TOOL_RENDERER_KEY];
 }
 
-export function setCompactToolRenderer(api: CompactToolRendererApi): void {
+export function setCompactToolRenderer(api: CompactToolRendererApi | undefined): void {
   (
     globalThis as typeof globalThis & {
       [COMPACT_TOOL_RENDERER_KEY]?: CompactToolRendererApi;
