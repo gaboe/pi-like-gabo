@@ -54,6 +54,9 @@ test("automatically compacts once above 100k tokens and rearms below 80k", async
   compactOptions.onError(new Error("failed"));
   turnEnd({}, ctx);
   assert.equal(compactions, 2);
+  compactOptions.onError(new Error("Nothing to compact"));
+  turnEnd({}, ctx);
+  assert.equal(compactions, 2);
   tokens = 80_000;
   turnEnd({}, ctx);
   tokens = 100_001;

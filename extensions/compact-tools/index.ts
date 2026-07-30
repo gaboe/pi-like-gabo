@@ -349,6 +349,7 @@ export default function compactTools(pi: ExtensionAPI) {
 		contextCompactionArmed = false;
 		ctx.compact({
 			onError: (error) => {
+				if (error.message === "Nothing to compact") return;
 				contextCompactionArmed = true;
 				if (ctx.hasUI) ctx.ui.notify(`Automatic context compaction failed: ${error.message}`, "warning");
 			},
