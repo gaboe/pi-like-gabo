@@ -1,33 +1,33 @@
 ---
 name: orchestrator
-description: "Drive multi-step work through TODOs, subagents, workflows, and monitored jobs while the parent stays focused on decisions, sanity gates, user communication, and integration. Use when asked to orchestrate, delegate a plan, coordinate parallel workers, or run a multi-phase delivery."
+description: "Drive multi-step work through durable plans, workers, workflows, and monitored commands while the parent stays focused on decisions, sanity gates, user communication, and integration. Use when asked to orchestrate, delegate a plan, coordinate parallel workers, or run a multi-phase delivery."
 ---
 
 # Orchestrator
 
 You are the **driver**, not the primary implementer. Keep the user informed, maintain durable state, assign bounded work, validate evidence, and perform actions that must remain parent-owned. Workers do repository exploration, implementation, focused verification, and independent review.
 
-Load `pi-orchestration` first. It and the plugin's orchestration glossary/ADR own runtime invariants; this skill adds the opt-in driver playbook. If wording drifts, the canonical plugin policy wins.
+Load the host's runtime orchestration policy first when one exists; it owns runtime invariants while this skill adds the opt-in driver playbook. Map durable planning, monitoring, and delegation to native capabilities instead of inventing unavailable tools.
 
-Load `delegate` for worker mechanics and `worktree` for checkout/stack operations when those project-local skills exist. For PR work, change into the affected checkout and load that repository’s `git-workflow` and `code-review`; never substitute a same-named skill from another checkout. Those skills own their boundaries; do not restate or bypass them here.
+Use the host's native worker or installed delegation adapter for worker mechanics. After identifying the active host, load [references/harnesses.md](references/harnesses.md) for concrete mappings. Load `worktree` for checkout/stack operations when that project-local skill exists. For PR work, change into the affected checkout and load that repository’s `git-workflow` and `code-review`; never substitute a same-named skill from another checkout. Those skills own their boundaries; do not restate or bypass them here.
 
 ## Start with durable state
 
 Before implementation:
 
-1. Turn the known plan into separate meaningful TODO phases. Do not hide a multi-step plan under one umbrella task. Before the first stack cascade, persist TODOs for each known downstream rewrite, audit, integrated gate, publication, and feedback phase.
-2. Mark exactly one driver phase `in_progress`; leave future phases `pending` and use `blockedBy` only for real prerequisites.
-3. Record the intended worker, scope, verification, and relevant worktree in the TODO description or metadata.
-4. If `todo get` or `todo list` reports `preparation: ready`, call `todo get` and validate its scope against the current checkout before delegating.
+1. Turn the known plan into separate meaningful durable phases. Do not hide a multi-step plan under one umbrella task. Before the first stack cascade, persist each known downstream rewrite, audit, integrated gate, publication, and feedback phase using the host's native plan/TODO mechanism when available.
+2. When that mechanism supports status, mark exactly one driver phase active; leave future phases pending and record only real prerequisites.
+3. Record the intended worker, scope, verification, and relevant worktree in durable state.
+4. When durable state reports prepared scope, validate it against the current checkout before delegating.
 
-When a command, CI run, watcher, or external state must be awaited, start a bounded `jobs` monitor and set the TODO to `waiting:jobs`. Do not repeatedly poll. A wake returns the TODO to `pending`; inspect its evidence before continuing.
+When a command, CI run, watcher, or external state must be awaited, use the host's bounded monitor. Do not repeatedly poll when completion notifications or wake events exist. Inspect terminal evidence before continuing.
 
 ## Driver-owned versus worker-owned
 
 The driver owns:
 
 - user questions, trade-offs, approvals, and progress reports;
-- TODO decomposition, ordering, dependencies, and lifecycle;
+- durable phase decomposition, ordering, dependencies, and lifecycle;
 - worker selection, prompts, budgets, cancellation, and escalation;
 - sanity checks of worker premises, diffs, and semantic results;
 - small integration fixes discovered while gating;
@@ -45,23 +45,23 @@ A direct driver edit is acceptable only when it is plainly smaller than delegati
 
 ## Choose the lightest execution primitive
 
-- **`subagent_spawn`**: one self-contained task. Prefer this for ordinary research, implementation, review, or verification. Spawn fire-and-forget and continue independent driver work.
-- **`workflow`**: only when the user explicitly requests a workflow/`ultracode` and the work needs dependent phases or dynamic fan-out. Children may patch their assigned trusted worktree but never mutate Git history or external systems.
-- **`jobs`**: servers, watchers, CI waits, commands likely to exceed 30 seconds, and repeated state checks. Long checks returned by workflow children belong here.
-- **`subagent_spawn`**: Pi-only in-process delegation. Prefer it over raw CLI processes.
+- **Native one-worker primitive**: one self-contained research, implementation, review, or verification task. Spawn fire-and-forget when supported and continue independent driver work.
+- **Workflow primitive**: only when the user explicitly requests workflow execution and the host provides it for dependent phases or dynamic fan-out. Children may patch their assigned trusted worktree but never mutate Git history or external systems.
+- **Monitored command primitive**: servers, watchers, CI waits, commands likely to exceed 30 seconds, and repeated state checks.
+- **Cross-harness adapter**: use when an independent harness adds evidence. Pass a named harness only when the active schema exposes that selector; otherwise use the current host's native worker. Capability detection wins over copied examples.
 
-Use at most four concurrent workers.
+Use at most four concurrent workers across all harnesses.
 
 ## Concurrency reflex
 
-Optimize critical path, not worker count, but default to concurrency. Before waiting, calling `subagent_wait`, or saying work will happen "after" a running operation:
+Optimize critical path, not worker count, but default to concurrency. Before waiting through the host's worker-wait primitive or saying work will happen "after" a running operation:
 
-1. Scan the TODO graph and remaining plan for runnable units.
+1. Scan the host's durable phase graph and remaining plan for runnable units.
 2. Separate true prerequisites from mere integration order.
 3. Start every safe independent unit now, up to the four-worker cap.
 4. Wait only when every remaining useful unit has a concrete dependency or mutation conflict.
 
-One driver TODO may own several parallel workers; the single-`in_progress` bookkeeping rule does not serialize execution. Same feature, PR, or stack is not itself a conflict. Compare exact write sets, worktrees/refs, mutable external state, and freshness requirements:
+One driver phase may own several parallel workers; single-active-phase bookkeeping, when supported, does not serialize execution. Same feature, PR, or stack is not itself a conflict. Compare exact write sets, worktrees/refs, mutable external state, and freshness requirements:
 
 - parallelize non-overlapping writes, read-only discovery, review, test planning, and verification against pinned snapshots;
 - use separate worktrees when a change can be prepared independently but integrated later;
@@ -80,15 +80,15 @@ Every worker prompt must stand alone and include:
 - read-only or write permission;
 - forbidden actions, especially commit/push/deploy/external mutation; forbid rebases too except for a `worktree`-governed `cascade-runner`;
 - concrete done criteria and bounded verification;
-- explicit model and reasoning effort chosen from `roles.md`; never omit them during orchestration because inheritance can multiply the parent's `high`/`xhigh` setting across workers;
-- explicit `max_turns`, sized from `roles.md`, plus a phase allocation for orientation, work, focused verification, and handoff;
+- explicit reasoning effort and, when the selected harness exposes a model selector, a model chosen from `roles.md`; avoid accidental inheritance of the parent's expensive setting;
+- an explicit bounded turn/time budget sized from `roles.md`, plus a phase allocation for orientation, work, focused verification, and handoff;
 - a two-turn handoff reserve: the child must stop starting operations when it reaches the reserve and report completed work, checks, remaining work, and blockers as `partial` rather than improvising;
 - when bounded remaining work could finish with more turns, instruction to request the exact amount using `budget_request: { additional_turns, reason }` with non-empty `remaining_work` before entering the reserve;
 - required semantic output shape.
 
-Estimate the combined phases before spawning. Split discovery, implementation, and independent review when they do not fit inside one cap with the reserve intact; do not silently rely on continuation or raise every budget. If progress reveals an oversized scope, narrow the active assignment before exhaustion and preserve its partial evidence. Continuation is never automatic. The orchestrator may approve one exact child-requested extension through `subagent_send`, only when evidence supports the bounded remaining work and total `max_turns` stays at or below 48; never alter the request, extend nested work, or revive a hard-limit failure.
+Estimate the combined phases before spawning. Split discovery, implementation, and independent review when they do not fit inside one cap with the reserve intact; do not silently rely on continuation or raise every budget. If progress reveals an oversized scope, narrow the active assignment before exhaustion and preserve its partial evidence. Continuation is never automatic. When the host exposes bounded continuation, approve one exact child-requested extension only when evidence supports the remaining work and total budget stays within the host cap; never alter the request, extend nested work, or revive a hard-limit failure.
 
-Pick a role skeleton from [roles.md](roles.md). Use exact Pi tiers: Luna for focused scouts/verifiers, Terra for implementation, Sol for review/planning. Sol high covers consequential risk; xhigh needs genuine difficulty and justification. Keep trivial work lightly budgeted.
+Pick a role skeleton from [roles.md](roles.md). Use only model and effort options exposed by the active host; never copy provider-specific model ids across harnesses. Keep trivial work lightly budgeted.
 
 ## Drive loop
 
@@ -96,16 +96,16 @@ For each phase: **decompose → seed → monitor → gate → integrate → repo
 
 1. **Decompose** into independently verifiable worker units.
 2. **Seed** workers with non-overlapping scopes and explicit ownership.
-3. **Monitor** through completion notifications or jobs. Do useful independent work; do not idle or manually poll. This replaces `delegate`’s periodic checks when first-class completion notifications or job wakes are available; periodic checks are only for CLI fallbacks without a wake mechanism.
+3. **Monitor** through native completion notifications or bounded monitors. Do useful independent work; do not idle or manually poll. Periodic checks are only for adapters without a wake mechanism.
 4. **Gate** every result:
    - transport `.ok` is not semantic success;
    - inspect the current diff and verify cited symbols/paths;
-   - rerun the smallest faithful check or start the exact long check as a parent job;
+   - rerun the smallest faithful check or start the exact long check through the parent's native monitor;
    - reject stale, empty, unrelated, or unverified handoffs.
 5. **Integrate** only validated work. The parent performs guarded history or external actions after approval.
 6. **Report** what landed, what is running, what failed validation, and what is blocked on the user.
 
-If a worker stalls or reports that its reserve is near, stop scope growth and request the bounded partial handoff before exhaustion. Continue the same worker when the remaining operation fits its current cap, or explicitly approve its one exact `budget_request` when justified and still within 48 total turns; otherwise preserve correct partial work and evidence and seed a narrower successor instead of restarting broad exploration. Never auto-extend or wait for a hard limit before narrowing. When a cascade returns partial, persist one successor TODO per remaining branch wave, including its blocker and evidence, before reporting or resuming technical work.
+If a worker stalls or reports that its reserve is near, stop scope growth and request the bounded partial handoff before exhaustion. Continue the same worker when remaining work fits its current cap, or explicitly approve one exact supported extension within the harness limit; otherwise preserve correct partial work and evidence and seed a narrower successor instead of restarting broad exploration. Never auto-extend or wait for a hard limit before narrowing. When a cascade returns partial, persist one successor phase per remaining branch wave, including its blocker and evidence, before reporting or resuming technical work.
 
 ## Multi-PR and review rounds
 
@@ -124,4 +124,4 @@ For stacked chains, retain the existing economics:
 
 ## Completion
 
-Never mark work completed while checks fail, implementation is partial, or a blocker is unresolved. When all visible TODOs are complete, run the completion review, create missing follow-ups or `todo clear`, and provide one context-preserving report: outcome, before → now, key paths, resulting flow, exact verification, usage/manual steps, and caveats.
+Never mark work completed while checks fail, implementation is partial, or a blocker is unresolved. When all visible durable phases are complete, run the completion review, create missing follow-ups, archive through the host's native mechanism when available, and provide one context-preserving report: outcome, before → now, key paths, resulting flow, exact verification, usage/manual steps, and caveats.

@@ -4,39 +4,37 @@ Choose the narrowest role that can produce independently checkable evidence. Eve
 
 ## Model and effort routing
 
-Always set both model and effort explicitly. Use the lowest tier that fits; deterministic checks and short feedback loops compensate for lower effort.
+Identify the active harness before routing. Always set effort explicitly when supported and set model explicitly when the harness exposes a selector. Use only model ids valid for that harness; concrete mappings live in [references/harnesses.md](references/harnesses.md). Use the lowest tier that fits because deterministic checks and short feedback loops compensate for lower effort.
 
-| Work                                                                          | Model | Effort   |
-| ----------------------------------------------------------------------------- | ----- | -------- |
-| Deterministic verifier or command runner                                      | Luna  | `low`    |
-| Focused scout                                                                 | Luna  | `low`    |
-| Broad repository exploration                                                  | Luna  | `medium` |
-| Bounded implementation with checks                                            | Terra | `low`    |
-| Multi-file implementation or ambiguous root cause                             | Terra | `low`    |
-| Routine review                                                                | Sol   | `low`    |
-| Planning, synthesis, or complex implementation                                | Sol   | `medium` |
-| Security, concurrency, money, migration, or irreversible-risk analysis        | Sol   | `high`   |
-| Critical problem after a documented `high` attempt failed for reasoning depth | Sol   | `xhigh`  |
+| Work                                                                          | Model class | Effort |
+| ----------------------------------------------------------------------------- | ----------- | ------ |
+| Deterministic verifier or focused scout                                       | Lowest capable native model | `low` |
+| Broad repository exploration                                                  | Native scouting model | `medium` |
+| Bounded or multi-file implementation, ambiguous root cause                    | Native implementation model | `low` |
+| Routine review                                                                | Native review model | `low` |
+| Planning, synthesis, or complex implementation                                | Native reasoning model | `medium` |
+| Security, concurrency, money, migration, or irreversible-risk analysis        | Strong native reasoning model | `high` |
+| Critical problem after a documented high-effort attempt failed for reasoning depth | Strongest justified native model | Highest justified setting |
 
-A failed check is evidence to fix the concrete defect at the same tier, not automatic justification for more reasoning. Escalate one step at a time. Never select `max` automatically; `xhigh` requires evidence that `high` was insufficient.
+A failed check is evidence to fix the concrete defect at the same harness/model tier, not automatic justification for more reasoning. Escalate one step at a time. Never select a maximum setting automatically; the highest setting requires evidence that the prior one was insufficient.
 
-## Turn-budget sizing
+## Turn/time-budget sizing
 
-Size `max_turns` by task class, then override only with a written scope reason. Tool-using assistant responses consume turns. Every cap below already includes two final turns reserved for verification summary and handoff.
+Use the selected harness's bounded turn or wall-clock budget. Override defaults only with a written scope reason. On turn-budgeted workers, reserve the final two turns for verification summary and handoff.
 
-| Task class | Suggested `max_turns` |
-| --- | ---: |
-| Deterministic command runner with no discovery | 6 |
-| Narrow mechanical scout | 8–12 |
-| Broad exploration, routine review, or planning | 16–24 |
-| Focused implementation with tests | 24–32 |
-| Cohesive multi-file or ambiguous root-cause package | 32–48, with explicit justification |
+| Task class | Relative budget |
+| --- | --- |
+| Deterministic command runner with no discovery | Smallest bounded budget |
+| Narrow mechanical scout | Short review budget |
+| Broad exploration, routine review, or planning | Medium bounded budget |
+| Focused implementation with tests | Implementation budget |
+| Cohesive multi-file or ambiguous root-cause package | Largest justified native budget |
 
-Estimate orientation, work, and focused verification separately; never choose a cap below their sum plus the reserve. Split discovery, implementation, and independent review when the estimate exceeds 48 or when they do not share one coherent write scope. A large finding list is decomposition input, not justification for a single oversized worker. Do not rely on automatic continuation: the child stops before the reserve and returns verified partial work and exact next steps. If bounded remaining work could finish with more turns, it may include exact `budget_request: { additional_turns, reason }` and non-empty `remaining_work`; the orchestrator may approve that amount once, with total `max_turns` still at most 48.
+Estimate orientation, work, and focused verification separately; never choose a cap below their sum plus the handoff reserve when turns are used. Split discovery, implementation, and independent review when they exceed the harness cap or do not share one coherent write scope. A large finding list is decomposition input, not justification for one oversized worker. Do not rely on automatic continuation: return verified partial work and exact next steps before exhaustion. If the harness supports bounded continuation, the worker may request one exact extension with a reason and non-empty remaining work; approve it at most once within that harness's cap.
 
 ## scout
 
-**Read-only; short budget.** Locate owners, callers, existing patterns, and likely checks. Return verified paths/symbols, uncertainties, and a proposed minimal scope. Use Luna for deterministic, low-risk work. Never ask a scout to decide domain or security policy.
+**Read-only; short budget.** Locate owners, callers, existing patterns, and likely checks. Return verified paths/symbols, uncertainties, and a proposed minimal scope. Use the lowest capable native model. Never ask a scout to decide domain or security policy.
 
 ## implementer
 
@@ -52,7 +50,7 @@ Use separate security/domain reviewers only when the risk warrants them; do not 
 
 ## verifier
 
-**Read-only except formatter-only changes when explicitly permitted.** Run the smallest faithful deterministic checks and inspect integration boundaries. Keep each child command below the workflow tool limit. Return exact long-running commands to the parent for `jobs` rather than bundling full build, lint, and tests into one child call.
+**Read-only except formatter-only changes when explicitly permitted.** Run the smallest faithful deterministic checks and inspect integration boundaries. Keep each child command below the active harness's tool limit. Return exact long-running commands to the parent for its native bounded monitor rather than bundling full build, lint, and tests into one child call.
 
 ## e2e-verifier
 

@@ -10,6 +10,7 @@ Gabo's reviewed Pi extensions, skills, and orchestration tools.
 - [Pi coding agent](https://github.com/earendil-works/pi-mono) compatible with the `0.82.x` APIs
 - Node.js `>=22.19.0`
 - Rust toolchain with Cargo, only for building the optional comment-checker binary
+- [RTK](https://github.com/rtk-ai/rtk) in `PATH` for compact `bash` output (optional; hook disables itself when absent)
 
 Windows is not currently supported by the setup scripts or comment-checker paths.
 
@@ -36,11 +37,12 @@ Package contents:
 - `pi-orchestration`: required orchestration policy explaining how TODOs, jobs, workflows, subagents, and `grill-me` fit together
 - `orchestrator`: opt-in driver role for durable TODO planning, bounded delegation, concurrency gates, and evidence-based integration; moved from Nexus so the plugin is canonical
 - `ultrathink`: explicit `/ultrathink [task]` (or `$ultrathink`) mode for bounded multi-agent investigation, synthesis, implementation, and independent verification; without an argument it uses the current conversation task
-- `whats-next`: `/whats-next [focus]` uses one read-only Luna subagent to review completed work, forgotten commitments, and material next steps
+- `whats-next`: portable `/whats-next [focus]` or `$whats-next` skill reviews completed work; Pi's command uses one tool-free Terra subagent and presents material next steps through an explanatory `ask_user` multi-select
 - `librarian`: source-backed open-source research with full-SHA GitHub permalinks
 - `thinking-shortcuts`: `Shift+Up` increases and `Shift+Down` decreases thinking level
 - `btw`: parallel `/btw` side conversations
 - `comment-checker`: warns the agent after `edit`/`write` adds unnecessary comments
+- `rtk`: vendored official RTK hook; rewrites supported `bash` commands through local `rtk` binary only
 - `pi-caveman` (pinned submodule): trims response prose; configured locally at `lite`
 - Ben Davis's complete setup (root-tracked pi-tools): Pi-only in-process subagents, workflows, background terminals, ask-user, copy-all, Firecrawl, first-class `fd`/`rg`, automatic run summaries, a model dashboard, and TUI customization
 
@@ -50,7 +52,7 @@ Pi extensions execute with the user's full permissions. Installation uses the cl
 
 Telemetry writes allowlisted lifecycle metadata to private rotating local JSONL files. Firecrawl sends search queries, URLs, and requested page content to its external service. Its API key is read from `~/.pi/agent/.env`; never commit or share that file. Remove Firecrawl from `pi.extensions` if external requests are not acceptable. The file-search setup downloads pinned `fd` and `rg` release binaries over HTTPS and verifies their SHA-256 checksums before installation. The current Pi CLI dependency shrinkwrap pins `brace-expansion@5.0.7`, which npm reports for GHSA-mh99-v99m-4gvg (local process availability/DoS); the latest compatible Pi package still contains it, so update when upstream refreshes that shrinkwrap and do not feed untrusted glob patterns into privileged unattended sessions. Do not install extensions whose permissions or data flow you have not reviewed.
 
-Project code is MIT licensed. Upstream notices and documentation remain under `LICENSES/`, vendor repositories, and each extension's `UPSTREAM.md`.
+Project code is MIT licensed. Upstream notices and documentation remain under `LICENSES/`, vendor repositories, and each extension's `UPSTREAM.md`. The vendored RTK hook is Apache-2.0; source pin is [`extensions/rtk/UPSTREAM.md`](extensions/rtk/UPSTREAM.md).
 
 ## Usage
 

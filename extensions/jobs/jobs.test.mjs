@@ -988,6 +988,7 @@ test("deadline settlement closes an uncooperative WebSocket before lifecycle com
     binary: "reject",
     maxFrameBytes: 4096,
   });
+  await waitFor(() => sockets.size === 1, "WebSocket did not connect");
   await Promise.race([
     failed,
     new Promise((_, reject) =>
@@ -995,7 +996,7 @@ test("deadline settlement closes an uncooperative WebSocket before lifecycle com
     ),
   ]);
   assert.equal(manager.get(job.id).status, "failed");
-  assert.equal(sockets.size, 0);
+  await waitFor(() => sockets.size === 0, "server socket did not close");
   await manager.dispose();
 });
 

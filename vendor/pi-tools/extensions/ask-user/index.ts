@@ -891,6 +891,9 @@ export default function askUser(pi: ExtensionAPI) {
               optionIndex = index;
               explanationIndex = 0;
               selectedExplanationModes.clear();
+              for (const mode of EXPLANATION_MODES) {
+                if (mode !== "custom") selectedExplanationModes.add(mode);
+              }
               explanationMenu = true;
               refresh();
               return;

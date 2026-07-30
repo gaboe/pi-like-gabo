@@ -13,7 +13,7 @@ Produce the strongest proportionate answer or implementation supported by curren
 - Treat `/ultrathink <request>` or `$ultrathink <request>` as authorization for bounded local investigation, planning, implementation, and verification described by the request.
 - With `/ultrathink` and no request, use only the active task from conversation context. Ask if no task is identifiable; never invent one.
 - It is **not** approval to commit, push, publish, merge, deploy, change external systems, spend money, expose credentials, or perform any other approval-gated mutation. Parent retains user questions, approvals, semantic acceptance, integration, Git history, and external mutations.
-- Use `workflow` only when the user says `ultracode` or explicitly requests workflow execution. Otherwise use direct work, TODO orchestration, jobs, and Pi in-process subagents as proportionate.
+- Use a workflow only when the user says `ultracode` or explicitly requests workflow execution and the host provides one. Otherwise use direct work plus the current harness's native planning, monitoring, and delegation capabilities as proportionate.
 
 ## Adaptive evidence plan
 
@@ -21,17 +21,20 @@ Before acting, identify the outcome, decisive claims, consequence of error, unkn
 
 ### Trivial or readily reversible work
 
-Do not manufacture ceremony. Inspect the current relevant source/state, gather minimal decisive evidence, perform the smallest faithful check, and add a quick independent sanity check. Independence may be a fresh deterministic calculation, a separate runtime probe, or one focused Luna verifier; fan-out, a dossier, and multiple agents are not mandatory. Stop when evidence covers the claim.
+Do not manufacture ceremony. Inspect the current relevant source/state, gather minimal decisive evidence, perform the smallest faithful check, and add a quick independent sanity check. Independence may be a fresh deterministic calculation, a separate runtime probe, or one focused native verifier; fan-out, a dossier, and multiple agents are not mandatory. Stop when evidence covers the claim.
 
 ### Hard consequential technical work
 
-Use 2–4 distinct Pi-only lanes when their evidence can change the result, subject to global `MAX_RUNNING = 4` and mutation conflicts. Prefer maximal coherent perspectives over file-sized tasks:
+Use 2–4 distinct lanes when their evidence can change the result, subject to a global four-worker cap and mutation conflicts. Prefer maximal coherent perspectives over file-sized tasks.
 
-- Luna `low`/`medium`: focused verification or broad repository/runtime scouting;
-- Terra `low`: bounded implementation and focused checks;
-- Sol `medium`: synthesis or planning;
-- Sol `high`: security, concurrency, money, migrations, irreversible risk, or similarly consequential analysis;
-- Sol `xhigh`: only a genuinely difficult critical problem after documenting why `high` was insufficient. Never select `max` automatically.
+Resolve the harness once before spawning:
+
+1. Use the host's native worker or installed delegation adapter.
+2. Pass a named harness only when the active spawn schema exposes that selector.
+3. Otherwise use the current host's native worker and never pass unsupported fields.
+4. Use only models and effort levels exposed by the selected harness; never copy provider-specific model ids across harnesses.
+
+After identifying the host, load [references/harnesses.md](references/harnesses.md) for concrete tool, model, and fallback mappings.
 
 Typical lanes are authoritative source/documentation inspection, runtime or deterministic verification, implementation/synthesis, and independent adversarial review. Start safe read-only lanes in parallel. Serialize overlapping writes, shared worktree/ref mutations, and work whose premise is changing. More agents are not evidence by themselves, and duplicate generic reviews do not count as independent lanes.
 
@@ -50,13 +53,13 @@ Never claim literal 100% certainty or infallibility. If a decisive claim cannot 
 
 ## Execution discipline
 
-1. Use the lightest plan that can satisfy the relevant completion gate. Hard consequential mutable work gets an evidence-backed Preparation Dossier and meaningful TODOs; trivial work may proceed directly.
-2. Give each lane a self-contained scope, permissions, stale conditions, done criteria, model/effort, and explicit turn budget. Use Pi Luna/Terra/Sol only; no Anthropic-provider agents.
+1. Use the lightest plan that can satisfy the relevant completion gate. Hard consequential mutable work gets an evidence-backed preparation dossier and meaningful durable phases in the host's native plan/TODO mechanism; trivial work may proceed directly.
+2. Give each lane a self-contained scope, permissions, stale conditions, done criteria, harness/model/effort, and explicit turn budget. Use native workers by default; cross-harness work goes through an installed delegation adapter or explicitly supported harness selector, never an improvised raw process when a first-class transport exists.
 3. Estimate orientation, work, focused verification, and handoff. Keep trivial tasks small. Use 8–12 turns for narrow scouts, 16–24 for broad review/planning, 24–32 for focused implementation, and 32–48 only for one justified cohesive multi-file/root-cause package.
-4. Reserve the final two worker turns for verification summary and handoff. Before the reserve, a worker with bounded remaining work returns `partial` with exact `budget_request`, reason, and non-empty remaining work. Parent may approve that exact extension once; total `max_turns` stays at or below 48. Never auto-extend, revive a hard-limit failure, or extend nested work.
-5. Run checks. Put commands likely to exceed 30 seconds or repeated external waits in jobs, continue independent work, and rely on completion/wake events. Do not poll. A wake is evidence to inspect, not automatic task completion.
+4. When the harness uses turn budgets, reserve the final two worker turns for verification summary and handoff. Before the reserve, a worker with bounded remaining work returns `partial` with exact `budget_request`, reason, and non-empty `remaining_work`. Approve at most one exact extension within that harness's cap. Never auto-extend, revive a hard-limit failure, or extend nested work.
+5. Run checks. Put commands likely to exceed 30 seconds or repeated external waits in the host's bounded monitor, continue independent work, and rely on completion/wake events when supported. Do not poll a first-class monitor. Terminal evidence requires inspection.
 6. Require independent adversarial review against the final current source/diff/state. Resolve findings or record them as residual risk.
-7. Package Workers return schema-valid `package_handoff`; mechanical validity is not semantic acceptance.
+7. When the host uses package workers, require its schema-valid handoff contract; mechanical validity is not semantic acceptance.
 
 ## Completion gates
 

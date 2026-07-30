@@ -45,6 +45,7 @@
       "./extensions/ultrathink/index.ts",
       "./extensions/whats-next/index.ts",
       "./extensions/compact-tools/index.ts",
+      "./extensions/rtk/index.ts",
       "./extensions/decision-guidance/index.ts",
       "./extensions/shared-memory/index.ts",
       "./vendor/pi-caveman/extensions/caveman.ts",
@@ -66,6 +67,7 @@
       "./skills/pi-orchestration",
       "./skills/orchestrator",
       "./skills/ultrathink",
+      "./skills/whats-next",
       "./skills/librarian",
       "./vendor/pi-tools/skills/background-terminals",
       "./vendor/pi-tools/skills/subagents"

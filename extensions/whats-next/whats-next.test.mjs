@@ -7,6 +7,7 @@ import whatsNext, { parseReview, reviewPrompt, sessionEvidence } from "./index.t
 function setup(run, tasks = []) {
   const requests = [];
   const messages = [];
+  const userMessages = [];
   const unregister = registerBackgroundSubagentService({
     async run(request) {
       requests.push(request);
@@ -22,6 +23,9 @@ function setup(run, tasks = []) {
     sendMessage(message) {
       messages.push(message);
     },
+    sendUserMessage(content, options) {
+      userMessages.push({ content, options });
+    },
   });
   const ctx = {
     cwd: "/work",
@@ -35,10 +39,10 @@ function setup(run, tasks = []) {
       ],
     },
   };
-  return { command, ctx, messages, requests, cleanup: () => { unregister(); __resetState(); } };
+  return { command, ctx, messages, userMessages, requests, cleanup: () => { unregister(); __resetState(); } };
 }
 
-test("runs exactly one tool-free Luna review and renders verified completion", async () => {
+test("runs exactly one tool-free Terra review and renders verified completion", async () => {
   const fixture = setup(async () => ({
     id: "sa-1",
     status: "done",
@@ -48,7 +52,7 @@ test("runs exactly one tool-free Luna review and renders verified completion", a
     assert.equal(fixture.command.name, "whats-next");
     await fixture.command.handler(" release readiness ", fixture.ctx);
     assert.equal(fixture.requests.length, 1);
-    assert.equal(fixture.requests[0].model, "openai-codex/gpt-5.6-luna");
+    assert.equal(fixture.requests[0].model, "openai-codex/gpt-5.6-terra");
     assert.equal(fixture.requests[0].reasoningEffort, "low");
     assert.deepEqual(fixture.requests[0].allowedTools, []);
     assert.equal(fixture.requests[0].noExtensions, true);
@@ -68,8 +72,11 @@ test("authoritative active TODO prevents a false completion verdict", async () =
   }), [{ id: 7, subject: "Run deployment", status: "waiting:user" }]);
   try {
     await fixture.command.handler("", fixture.ctx);
-    assert.match(fixture.messages[0].content, /#7 \[waiting:user\] Run deployment/);
-    assert.doesNotMatch(fixture.messages[0].content, /Nothing else/);
+    assert.equal(fixture.messages.length, 0);
+    assert.match(fixture.userMessages[0].content, /call ask_user exactly once as your only action/);
+    assert.match(fixture.userMessages[0].content, /"id":7/);
+    assert.match(fixture.userMessages[0].content, /"status":"waiting:user"/);
+    assert.deepEqual(fixture.userMessages[0].options, { deliverAs: "followUp" });
   } finally {
     fixture.cleanup();
   }
@@ -86,8 +93,9 @@ test("re-reads TODO state after the child finishes", async () => {
   });
   try {
     await fixture.command.handler("", fixture.ctx);
-    assert.match(fixture.messages[0].content, /#9 \[pending\] Late task/);
-    assert.doesNotMatch(fixture.messages[0].content, /Nothing else/);
+    assert.equal(fixture.messages.length, 0);
+    assert.match(fixture.userMessages[0].content, /"id":9/);
+    assert.match(fixture.userMessages[0].content, /"status":"pending"/);
   } finally {
     fixture.cleanup();
   }
@@ -106,9 +114,33 @@ test("renders independently found forgotten work separately from optional ideas"
   }), [{ id: 1, subject: "Publish", status: "completed" }]);
   try {
     await fixture.command.handler("", fixture.ctx);
-    assert.match(fixture.messages[0].content, /One commitment remains/);
-    assert.match(fixture.messages[0].content, /- Verify the public clone/);
-    assert.match(fixture.messages[0].content, /Optional:\n- Add a release tag later/);
+    assert.equal(fixture.messages.length, 0);
+    assert.match(fixture.userMessages[0].content, /One commitment remains/);
+    assert.match(fixture.userMessages[0].content, /Verify the public clone/);
+    assert.match(fixture.userMessages[0].content, /Add a release tag later/);
+    assert.match(fixture.userMessages[0].content, /multiSelect=true/);
+    assert.match(fixture.userMessages[0].content, /localized explanation flow/);
+    assert.match(fixture.userMessages[0].content, /selecting an option authorizes its exact stated scope/);
+    assert.match(fixture.userMessages[0].content, /start its authorized work immediately/);
+    assert.match(fixture.userMessages[0].content, /do not ask them to repeat, confirm, or send a follow-up message/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("keeps known unresolved TODOs visible when independent review is unable", async () => {
+  const fixture = setup(async () => ({
+    id: "sa-unable",
+    status: "done",
+    output: JSON.stringify({ status: "unable", summary: "Session evidence is incomplete", unfinished: [], optional: [] }),
+  }), [{ id: 9, subject: "Publish release", status: "waiting:user" }]);
+  try {
+    await fixture.command.handler("", fixture.ctx);
+    assert.equal(fixture.messages.length, 0);
+    assert.equal(fixture.userMessages.length, 1);
+    assert.match(fixture.userMessages[0].content, /independent review could not assess additional omissions/i);
+    assert.match(fixture.userMessages[0].content, /#9 Publish release \(waiting:user\)/);
+    assert.match(fixture.userMessages[0].content, /multiSelect=true/);
   } finally {
     fixture.cleanup();
   }
@@ -122,8 +154,9 @@ test("does not accept a contradictory nothing verdict", async () => {
   }));
   try {
     await fixture.command.handler("", fixture.ctx);
-    assert.match(fixture.messages[0].content, /Run checks/);
-    assert.doesNotMatch(fixture.messages[0].content, /Nothing else/);
+    assert.equal(fixture.messages.length, 0);
+    assert.match(fixture.userMessages[0].content, /Run checks/);
+    assert.doesNotMatch(fixture.userMessages[0].content, /Nothing else/);
   } finally {
     fixture.cleanup();
   }
