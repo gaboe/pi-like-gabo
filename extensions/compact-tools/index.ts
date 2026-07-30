@@ -21,11 +21,18 @@ const CONFIG_ENTRY = "compact-tools-config";
 const SUMMARY_ENTRY = "compact-tools-summary";
 const PATCH_KEY = Symbol.for("pi-plugins.compact-tools.patch.v1");
 const STATE_KEY = Symbol.for("pi-plugins.compact-tools.state.v1");
-const PATCH_OWNER = Symbol("pi-plugins.compact-tools.patch-owner");
-const RENDERER_OWNER = Symbol("pi-plugins.compact-tools.renderer-owner");
+const RENDERER_OWNER_KEY = Symbol.for("pi-plugins.compact-tools.renderer-owner.v1");
+const RENDERER_PRIOR_KEY = Symbol.for("pi-plugins.compact-tools.renderer-prior.v1");
+const RENDERER_ACTIVE_KEY = Symbol.for("pi-plugins.compact-tools.renderer-active.v1");
 const COMPACT_CONTEXT_AT_TOKENS = 100_000;
 const REARM_CONTEXT_COMPACTION_AT_TOKENS = 80_000;
 const MAX_WIDTH = 110;
+
+function compactionThresholds(contextWindow: number | undefined) {
+	if (!contextWindow) return { compactAt: COMPACT_CONTEXT_AT_TOKENS, rearmAt: REARM_CONTEXT_COMPACTION_AT_TOKENS };
+	const compactAt = Math.min(COMPACT_CONTEXT_AT_TOKENS, Math.floor(contextWindow * 0.8));
+	return { compactAt, rearmAt: Math.min(REARM_CONTEXT_COMPACTION_AT_TOKENS, Math.floor(compactAt * 0.8)) };
+}
 
 type ToolInfo = {
 	id: string;
@@ -86,15 +93,33 @@ function runtime(): RuntimeState {
 }
 
 const state = runtime();
-const rendererApi: CompactToolRendererApi = {
-	version: 1,
-	enabled: () => state.enabled,
-	render: renderCompactEntries,
+type OwnedRendererApi = CompactToolRendererApi & {
+	[RENDERER_OWNER_KEY]: symbol;
+	[RENDERER_PRIOR_KEY]: CompactToolRendererApi | undefined;
+	[RENDERER_ACTIVE_KEY]: boolean;
 };
-Object.defineProperty(rendererApi, RENDERER_OWNER, { value: true });
 
-function isOwnedRenderer(api: CompactToolRendererApi | undefined): boolean {
-	return !!api && (api as CompactToolRendererApi & { [RENDERER_OWNER]?: boolean })[RENDERER_OWNER] === true;
+function createRendererApi(owner: symbol, prior: CompactToolRendererApi | undefined): OwnedRendererApi {
+	const api: CompactToolRendererApi = {
+		version: 1,
+		enabled: () => state.enabled,
+		render: renderCompactEntries,
+	};
+	Object.defineProperties(api, {
+		[RENDERER_OWNER_KEY]: { value: owner },
+		[RENDERER_PRIOR_KEY]: { value: prior },
+		[RENDERER_ACTIVE_KEY]: { value: true, writable: true },
+	});
+	return api as OwnedRendererApi;
+}
+
+function isOwnedRenderer(api: CompactToolRendererApi | undefined): api is OwnedRendererApi {
+	return !!api && typeof (api as Partial<OwnedRendererApi>)[RENDERER_OWNER_KEY] === "symbol";
+}
+
+function activeRenderer(api: CompactToolRendererApi | undefined): CompactToolRendererApi | undefined {
+	while (isOwnedRenderer(api) && !api[RENDERER_ACTIVE_KEY]) api = api[RENDERER_PRIOR_KEY];
+	return api;
 }
 
 function resetRun() {
@@ -228,18 +253,24 @@ function compactLines(info: ToolInfo, theme: Theme): string[] {
 
 type RendererPatch = {
 	owner: symbol;
+	active: boolean;
+	prior?: RendererPatch;
 	originalUpdateDisplay: (...args: any[]) => any;
 	originalRender: (...args: any[]) => any;
+	rootUpdateDisplay: (...args: any[]) => any;
+	rootRender: (...args: any[]) => any;
 	updateDisplay: (...args: any[]) => any;
 	render: (...args: any[]) => any;
 };
 
-function patchRenderer() {
+function patchRenderer(owner: symbol) {
 	const proto = ToolExecutionComponent.prototype as any;
 	if (typeof proto.updateDisplay !== "function" || typeof proto.render !== "function") return;
 	const prior = proto[PATCH_KEY] as RendererPatch | undefined;
-	const originalUpdateDisplay = prior?.originalUpdateDisplay ?? proto.updateDisplay;
-	const originalRender = prior?.originalRender ?? proto.render;
+	const originalUpdateDisplay = proto.updateDisplay;
+	const originalRender = proto.render;
+	const rootUpdateDisplay = prior?.rootUpdateDisplay ?? originalUpdateDisplay;
+	const rootRender = prior?.rootRender ?? originalRender;
 
 	const updateDisplay = function compactToolsUpdateDisplay(this: any) {
 		const category = categoryFor(this.toolName ?? "");
@@ -283,16 +314,28 @@ function patchRenderer() {
 	};
 	proto.updateDisplay = updateDisplay;
 	proto.render = render;
-	proto[PATCH_KEY] = { owner: PATCH_OWNER, originalUpdateDisplay, originalRender, updateDisplay, render } satisfies RendererPatch;
+	proto[PATCH_KEY] = { owner, active: true, prior, originalUpdateDisplay, originalRender, rootUpdateDisplay, rootRender, updateDisplay, render } satisfies RendererPatch;
 }
 
-function restoreRendererPatch() {
+function restoreRendererPatch(owner: symbol) {
 	const proto = ToolExecutionComponent.prototype as any;
-	const patch = proto[PATCH_KEY] as RendererPatch | undefined;
-	if (!patch || patch.owner !== PATCH_OWNER) return;
-	if (proto.updateDisplay === patch.updateDisplay) proto.updateDisplay = patch.originalUpdateDisplay;
-	if (proto.render === patch.render) proto.render = patch.originalRender;
-	if (proto.updateDisplay === patch.originalUpdateDisplay && proto.render === patch.originalRender) delete proto[PATCH_KEY];
+	let patch = proto[PATCH_KEY] as RendererPatch | undefined;
+	while (patch && patch.owner !== owner) patch = patch.prior;
+	if (!patch) return;
+	patch.active = false;
+	const current = proto[PATCH_KEY] as RendererPatch | undefined;
+	if (!current || current.owner !== owner) return;
+	let restore = current.prior;
+	while (restore && !restore.active) restore = restore.prior;
+	if (restore) {
+		proto.updateDisplay = restore.updateDisplay;
+		proto.render = restore.render;
+		proto[PATCH_KEY] = restore;
+	} else {
+		proto.updateDisplay = current.rootUpdateDisplay;
+		proto.render = current.rootRender;
+		delete proto[PATCH_KEY];
+	}
 }
 
 function refresh() {
@@ -334,22 +377,26 @@ function summaryText(data: Summary): string {
 
 export default function compactTools(pi: ExtensionAPI) {
 	let contextCompactionArmed = true;
+	const patchOwner = Symbol("pi-plugins.compact-tools.patch-owner");
 	const priorRenderer = getCompactToolRenderer();
+	const rendererApi = createRendererApi(patchOwner, priorRenderer);
 	setCompactToolRenderer(rendererApi);
-	patchRenderer();
+	patchRenderer(patchOwner);
 	pi.on("context", (event) => ({ messages: boundToolResultHistory(event.messages) }));
-	pi.on("turn_end", (_event, ctx) => {
-		const tokens = ctx.getContextUsage()?.tokens;
+	pi.on("agent_end", (_event, ctx) => {
+		const usage = ctx.getContextUsage();
+		const tokens = usage?.tokens;
 		if (tokens == null) return;
-		if (tokens <= REARM_CONTEXT_COMPACTION_AT_TOKENS) {
+		const { compactAt, rearmAt } = compactionThresholds(usage?.contextWindow);
+		if (tokens <= rearmAt) {
 			contextCompactionArmed = true;
 			return;
 		}
-		if (tokens <= COMPACT_CONTEXT_AT_TOKENS || !contextCompactionArmed) return;
+		if (tokens <= compactAt || !contextCompactionArmed) return;
 		contextCompactionArmed = false;
 		ctx.compact({
 			onError: (error) => {
-				if (error.message === "Nothing to compact") return;
+				if (error.message.startsWith("Nothing to compact")) return;
 				contextCompactionArmed = true;
 				if (ctx.hasUI) ctx.ui.notify(`Automatic context compaction failed: ${error.message}`, "warning");
 			},
@@ -380,8 +427,9 @@ export default function compactTools(pi: ExtensionAPI) {
 		return text ? new Text(theme.fg("dim", text), 0, 0) : undefined;
 	});
 	pi.on("session_shutdown", () => {
-		restoreRendererPatch();
-		if (getCompactToolRenderer() === rendererApi) setCompactToolRenderer(isOwnedRenderer(priorRenderer) ? undefined : priorRenderer);
+		rendererApi[RENDERER_ACTIVE_KEY] = false;
+		restoreRendererPatch(patchOwner);
+		if (getCompactToolRenderer() === rendererApi) setCompactToolRenderer(activeRenderer(priorRenderer));
 		state.components.clear();
 	});
 	pi.on("session_start", async (_event, ctx) => {

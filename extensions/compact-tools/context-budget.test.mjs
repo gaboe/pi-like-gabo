@@ -25,15 +25,16 @@ test("registers context budgeting independently of compact display state", () =>
   assert.ok(context({ messages: [source] }).messages[0].content[0].text.length <= MAX_TOOL_RESULT_TEXT_CHARS);
 });
 
-test("automatically compacts once above 100k tokens and rearms below 80k", async () => {
-  let turnEnd;
+test("automatically compacts after an agent ends above threshold and rearms below it", async () => {
+  const agentEnd = [];
   let sessionStart;
   let tokens = 100_001;
   let compactions = 0;
+  const warnings = [];
   let compactOptions;
   compactTools({
     on(name, handler) {
-      if (name === "turn_end") turnEnd = handler;
+      if (name === "agent_end") agentEnd.push(handler);
       if (name === "session_start") sessionStart = handler;
     },
     registerCommand() {},
@@ -41,26 +42,29 @@ test("automatically compacts once above 100k tokens and rearms below 80k", async
     appendEntry() {},
   });
   const ctx = {
-    getContextUsage: () => ({ tokens }),
+    getContextUsage: () => ({ tokens, contextWindow: 272_000 }),
     compact: (options) => {
       compactions++;
       compactOptions = options;
     },
+    hasUI: true,
+    ui: { notify: (message) => warnings.push(message) },
   };
 
-  turnEnd({}, ctx);
-  turnEnd({}, ctx);
+  agentEnd[0]({}, ctx);
+  agentEnd[0]({}, ctx);
   assert.equal(compactions, 1);
   compactOptions.onError(new Error("failed"));
-  turnEnd({}, ctx);
+  agentEnd[0]({}, ctx);
   assert.equal(compactions, 2);
-  compactOptions.onError(new Error("Nothing to compact"));
-  turnEnd({}, ctx);
+  compactOptions.onError(new Error("Nothing to compact (session too small)"));
+  agentEnd[0]({}, ctx);
   assert.equal(compactions, 2);
+  assert.deepEqual(warnings, ["Automatic context compaction failed: failed"]);
   tokens = 80_000;
-  turnEnd({}, ctx);
+  agentEnd[0]({}, ctx);
   tokens = 100_001;
-  turnEnd({}, ctx);
+  agentEnd[0]({}, ctx);
   assert.equal(compactions, 3);
   await sessionStart({}, {
     ...ctx,
@@ -68,8 +72,26 @@ test("automatically compacts once above 100k tokens and rearms below 80k", async
     ui: { theme: {} },
     sessionManager: { getBranch: () => [] },
   });
-  turnEnd({}, ctx);
+  agentEnd[0]({}, ctx);
   assert.equal(compactions, 4);
+});
+
+test("uses a model-relative threshold below 100k contexts", () => {
+  const agentEnd = [];
+  let compactions = 0;
+  compactTools({
+    on(name, handler) {
+      if (name === "agent_end") agentEnd.push(handler);
+    },
+    registerCommand() {},
+    registerEntryRenderer() {},
+    appendEntry() {},
+  });
+  agentEnd[0]({}, {
+    getContextUsage: () => ({ tokens: 48_001, contextWindow: 60_000 }),
+    compact: () => { compactions++; },
+  });
+  assert.equal(compactions, 1);
 });
 
 const historyToolChars = (messages) => messages
