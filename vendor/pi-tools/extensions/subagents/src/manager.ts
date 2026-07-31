@@ -1655,6 +1655,16 @@ const makeManager = Effect.gen(function* () {
                 });
               }
               return entry.session.send(text).pipe(
+                Effect.tap(() =>
+                  restarting
+                    ? Effect.sync(() => {
+                        entry.snapshot.status = "running";
+                        entry.snapshot.settledAt = undefined;
+                        entry.snapshot.errorText = undefined;
+                        notify(entry.snapshot.id);
+                      })
+                    : Effect.void,
+                ),
                 Effect.onError(() =>
                   restarting
                     ? Effect.sync(() => {

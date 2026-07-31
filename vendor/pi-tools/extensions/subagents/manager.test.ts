@@ -86,4 +86,17 @@ test("Pi fixture completes and retains Pi backend metadata", async () => {
   }
 });
 
+test("restarting a settled subagent is visible before agent_start", async () => {
+  const rt = runtime();
+  try {
+    const manager = await rt.runPromise(SubagentManager);
+    const snap = await runTool(rt, manager.spawn("pi", task()));
+    await runTool(rt, manager.waitFor([snap.id]));
+    await runTool(rt, manager.send(snap.id, "continue"));
+    assert.equal(manager.view.get(snap.id)?.status, "running");
+  } finally {
+    await rt.dispose();
+  }
+});
+
 test("manager keeps MAX_RUNNING at four", () => assert.equal(MAX_RUNNING, 4));
