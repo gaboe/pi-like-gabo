@@ -46,6 +46,7 @@ test("session total combines parent assistant and deduplicated persisted child c
 
 test("session replacement ignores a stale settled event context and disposes bus callbacks", () => {
   const handlers = new Map<string, Function>();
+  const commands = new Set<string>();
   const listeners = new Set<Function>();
   const pi = {
     events: {
@@ -56,6 +57,7 @@ test("session replacement ignores a stale settled event context and disposes bus
       },
     },
     on: (event: string, handler: Function) => handlers.set(event, handler),
+    registerCommand: (name: string) => commands.add(name),
     getThinkingLevel: () => "off",
   };
   const context = () =>
@@ -67,6 +69,7 @@ test("session replacement ignores a stale settled event context and disposes bus
   const oldContext = context();
   const newContext = context();
   modelInfo(pi as never);
+  assert.deepEqual(commands, new Set(["context"]));
 
   handlers.get("session_start")!({}, oldContext);
   (oldContext as unknown as { getContextUsage: () => null }).getContextUsage =
