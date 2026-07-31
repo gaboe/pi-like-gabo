@@ -7,11 +7,14 @@ import {
   boundToolResultHistory,
   MAX_TOOL_HISTORY_TEXT_CHARS,
   MAX_TOOL_RESULT_TEXT_CHARS,
+  MAX_NON_TEXT_BLOCKS_PER_RESULT,
+  modeledProviderChars,
+  providerText,
 } from "./context-budget.ts";
 import { buildToolResult } from "../todo/tool/response-envelope.ts";
 import { createTodoSnapshot } from "../todo/state/replay.ts";
 
-test("registers context budgeting independently of compact display state", () => {
+test("registers context budgeting independently of compact display state", async () => {
   let context;
   compactTools({
     on(name, handler) {
@@ -22,13 +25,16 @@ test("registers context budgeting independently of compact display state", () =>
     appendEntry() {},
   });
   const source = { role: "toolResult", content: [{ type: "text", text: "x".repeat(20_000) }] };
-  assert.ok(context({ messages: [source] }).messages[0].content[0].text.length <= MAX_TOOL_RESULT_TEXT_CHARS);
+  const result = await context({ messages: [source] }, {
+    sessionManager: { getSessionId: () => "test", getSessionDir: () => "/tmp" },
+  });
+  assert.ok(result.messages[0].content[0].text.length <= MAX_TOOL_RESULT_TEXT_CHARS);
 });
 
 test("automatically compacts after an agent ends above threshold and rearms below it", async () => {
   const agentEnd = [];
   let sessionStart;
-  let tokens = 100_001;
+  let tokens = 244_801;
   let compactions = 0;
   const warnings = [];
   let compactOptions;
@@ -61,9 +67,9 @@ test("automatically compacts after an agent ends above threshold and rearms belo
   agentEnd[0]({}, ctx);
   assert.equal(compactions, 2);
   assert.deepEqual(warnings, ["Automatic context compaction failed: failed"]);
-  tokens = 80_000;
+  tokens = 195_840;
   agentEnd[0]({}, ctx);
-  tokens = 100_001;
+  tokens = 244_801;
   agentEnd[0]({}, ctx);
   assert.equal(compactions, 3);
   await sessionStart({}, {
@@ -76,7 +82,7 @@ test("automatically compacts after an agent ends above threshold and rearms belo
   assert.equal(compactions, 4);
 });
 
-test("uses a model-relative threshold below 100k contexts", () => {
+test("uses a 90% model-relative threshold", () => {
   const agentEnd = [];
   let compactions = 0;
   compactTools({
@@ -88,7 +94,7 @@ test("uses a model-relative threshold below 100k contexts", () => {
     appendEntry() {},
   });
   agentEnd[0]({}, {
-    getContextUsage: () => ({ tokens: 48_001, contextWindow: 60_000 }),
+    getContextUsage: () => ({ tokens: 54_001, contextWindow: 60_000 }),
     compact: () => { compactions++; },
   });
   assert.equal(compactions, 1);
@@ -122,21 +128,15 @@ test("bounds aggregate tool history while preserving recent results and transcri
     bounded.map(({ toolCallId, toolName, isError, details }) => ({ toolCallId, toolName, isError, details })),
     messages.map(({ toolCallId, toolName, isError, details }) => ({ toolCallId, toolName, isError, details })),
   );
-  assert.deepEqual(
-    bounded.flatMap((message) => message.content ?? []).filter((block) => block.type === "image"),
-    messages.flatMap((message) => message.content ?? []).filter((block) => block.type === "image"),
-  );
+  const boundedImages = bounded.flatMap((message) => message.content ?? []).filter((block) => block.type === "image");
+  const sourceImages = messages.flatMap((message) => message.content ?? []).filter((block) => block.type === "image");
+  assert.deepEqual(boundedImages, sourceImages.slice(-boundedImages.length));
   assert.match(bounded[1].content.find((block) => block.type === "text").text, /omitted|…/);
   assert.match(bounded.at(-1).content.find((block) => block.type === "text").text, /^39:/);
   assert.deepEqual(boundToolResultHistory(bounded), bounded);
 });
 
-const providerChars = (content) => {
-  const text = content.filter((block) => block.type === "text");
-  const joined = text.reduce((size, block) => size + block.text.length, 0) + Math.max(0, text.length - 1);
-  if (joined > 0) return joined;
-  return content.some((block) => block.type === "image") ? "(see attached image)".length : "(no tool output)".length;
-};
+const providerChars = modeledProviderChars;
 
 test("accounts for OpenAI placeholders when exhausting aggregate history", () => {
   const messages = [
@@ -164,7 +164,7 @@ test("counts Pi 0.82.1 OpenAI text separators and exact source omission", () => 
   const bounded = boundToolResultContext(source);
   assert.equal(providerChars(bounded.content), MAX_TOOL_RESULT_TEXT_CHARS);
   assert.equal(omitted(bounded.content), 105);
-  assert.equal(omitted(bounded.content), 16_384 - bounded.content.filter((block) => block.type === "text" && !/chars omitted/.test(block.text)).reduce((size, block) => size + block.text.length, 0));
+  assert.equal(omitted(bounded.content), providerText(source.content).length - bounded.content.filter((block) => block.type === "text" && !/chars omitted/.test(block.text)).reduce((size, block) => size + block.text.length, 0));
   assert.deepEqual(boundToolResultContext(bounded), bounded);
 
   const separatorsOnly = {
@@ -172,7 +172,8 @@ test("counts Pi 0.82.1 OpenAI text separators and exact source omission", () => 
     content: Array.from({ length: 16_386 }, () => ({ type: "text", text: "" })),
   };
   const emptyBounded = boundToolResultContext(separatorsOnly);
-  assert.equal(providerChars(emptyBounded.content), "(no tool output)".length);
+  assert.ok(providerChars(emptyBounded.content) <= MAX_TOOL_RESULT_TEXT_CHARS);
+  assert.equal(omitted(emptyBounded.content), providerText(separatorsOnly.content).length - emptyBounded.content.filter((block) => block.type === "text" && !/chars omitted/.test(block.text)).reduce((size, block) => size + block.text.length, 0));
   assert.deepEqual(boundToolResultContext(emptyBounded), emptyBounded);
 
   const sparse = {
@@ -180,8 +181,8 @@ test("counts Pi 0.82.1 OpenAI text separators and exact source omission", () => 
     content: [...separatorsOnly.content.slice(0, -1), { type: "text", text: "x" }],
   };
   const sparseBounded = boundToolResultContext(sparse);
-  assert.equal(providerChars(sparseBounded.content), 1);
-  assert.equal(sparseBounded.content[0].text, "x");
+  assert.ok(providerChars(sparseBounded.content) <= MAX_TOOL_RESULT_TEXT_CHARS);
+  assert.equal(omitted(sparseBounded.content), providerText(sparse.content).length - sparseBounded.content.filter((block) => block.type === "text" && !/chars omitted/.test(block.text)).reduce((size, block) => size + block.text.length, 0));
 
   const fragmented = {
     role: "toolResult",
@@ -191,14 +192,54 @@ test("counts Pi 0.82.1 OpenAI text separators and exact source omission", () => 
   assert.ok(providerChars(fragmentedBounded.content) <= MAX_TOOL_RESULT_TEXT_CHARS);
   assert.equal(
     omitted(fragmentedBounded.content),
-    16_386 - fragmentedBounded.content.filter((block) => block.type === "text" && !/chars omitted/.test(block.text)).reduce((size, block) => size + block.text.length, 0),
+    providerText(fragmented.content).length - fragmentedBounded.content.filter((block) => block.type === "text" && !/chars omitted/.test(block.text)).reduce((size, block) => size + block.text.length, 0),
   );
 
   const twoLarge = { role: "toolResult", content: [{ type: "text", text: "a".repeat(10_000) }, { type: "text", text: "b".repeat(10_000) }] };
   const sliced = boundToolResultContext(twoLarge);
   assert.equal(providerChars(sliced.content), MAX_TOOL_RESULT_TEXT_CHARS);
   assert.equal(omitted(sliced.content), 3722);
-  assert.equal(omitted(sliced.content), 20_000 - sliced.content.filter((block) => block.type === "text" && !/chars omitted/.test(block.text)).reduce((size, block) => size + block.text.length, 0));
+  assert.equal(omitted(sliced.content), providerText(twoLarge.content).length - sliced.content.filter((block) => block.type === "text" && !/chars omitted/.test(block.text)).reduce((size, block) => size + block.text.length, 0));
+});
+
+test("reports exact original provider character ranges for 20,002 characters", () => {
+  const source = { role: "toolResult", content: [{ type: "text", text: "x".repeat(20_002) }] };
+  let individual;
+  const bounded = boundToolResultContext(source, (_message, info) => {
+    individual = info;
+    return `\n\n[${info.omitted} chars omitted from LLM context]\n\n`;
+  });
+  assert.equal(individual.total, 20_002);
+  assert.equal(individual.omitted, individual.end - individual.start + 1);
+  assert.equal(providerChars(bounded.content), MAX_TOOL_RESULT_TEXT_CHARS);
+
+  const seen = [];
+  boundToolResultHistory([
+    source,
+    ...Array.from({ length: 5 }, (_, index) => ({ role: "toolResult", content: [{ type: "text", text: `${index}${"z".repeat(20_001)}` }] })),
+  ], (_message, info, index) => {
+    seen.push({ index, ...info });
+    return `[chars=${info.start}-${info.end} omitted=${info.omitted} total=${info.total}]`;
+  });
+  assert.ok(seen.some((info) => info.index === 0 && info.start === 1 && info.end === 20_002 && info.omitted === 20_002 && info.total === 20_002));
+});
+
+test("caps 4,000 image-only blocks and preserves latest bounded images", () => {
+  const source = {
+    role: "toolResult",
+    content: Array.from({ length: 4_000 }, (_, index) => ({ type: "image", data: `${index}`, mimeType: "image/png" })),
+  };
+  const bounded = boundToolResultHistory([source])[0];
+  const images = bounded.content.filter((block) => block.type === "image");
+  assert.equal(images.length, MAX_NON_TEXT_BLOCKS_PER_RESULT);
+  assert.deepEqual(images.map((image) => image.data), Array.from({ length: MAX_NON_TEXT_BLOCKS_PER_RESULT }, (_, index) => `${4_000 - MAX_NON_TEXT_BLOCKS_PER_RESULT + index}`));
+  assert.match(bounded.content.find((block) => block.type === "text").text, /3984 image\/binary blocks omitted/);
+  assert.ok(providerChars(bounded.content) <= MAX_TOOL_RESULT_TEXT_CHARS);
+  assert.ok(historyToolChars([bounded]) <= MAX_TOOL_HISTORY_TEXT_CHARS);
+
+  const repeated = { type: "image", data: "same", mimeType: "image/png" };
+  const seventeen = boundToolResultContext({ role: "toolResult", content: Array(17).fill(repeated) });
+  assert.equal(seventeen.content.filter((block) => block.type === "image").length, MAX_NON_TEXT_BLOCKS_PER_RESULT);
 });
 
 test("preserves interleaved block order, source, and success/error caps", () => {
@@ -255,4 +296,99 @@ test("versioned snapshots own replay while tool details do not repeat state", ()
     { role: "toolResult", toolCallId: "call-1", toolName: "todo", content: result.content, details: result.details },
   ]);
   assert.equal(llm[0].details, result.details);
+});
+
+test("empty in-memory session disables persistence and keeps normal truncation", async () => {
+  const { lstat } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  let context;
+  compactTools({ on(name, handler) { if (name === "context") context = handler; }, registerCommand() {}, registerEntryRenderer() {}, appendEntry() {} });
+  const session = SessionManager.inMemory();
+  const cwdArtifacts = join(process.cwd(), ".compact-tool-artifacts");
+  const existed = await lstat(cwdArtifacts).then(() => true, () => false);
+  const result = await context({ messages: [{ role: "toolResult", toolCallId: "call", content: [{ type: "text", text: "x".repeat(20_002) }] }] }, { sessionManager: session });
+  const marker = result.messages[0].content.find((block) => block.type === "text" && /chars omitted/.test(block.text)).text;
+  assert.doesNotMatch(marker, /Recovery id=/);
+  assert.equal(await lstat(cwdArtifacts).then(() => true, () => false), existed);
+});
+
+test("duplicate tool-call IDs bind recovery to message index and exact content", async (t) => {
+  const { mkdtemp, readFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { realpath } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "compact-duplicate-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let context;
+  compactTools({ on(name, handler) { if (name === "context") context = handler; }, registerCommand() {}, registerEntryRenderer() {}, appendEntry() {} });
+  const texts = [`a${"x".repeat(20_001)}`, `b${"y".repeat(20_001)}`];
+  const messages = texts.map((text) => ({ role: "toolResult", toolCallId: "duplicate", content: [{ type: "text", text }] }));
+  const result = await context({ messages }, { sessionManager: { getSessionId: () => "../session", getSessionDir: () => root } });
+  const paths = result.messages.map((message) => message.content.find((block) => block.type === "text" && block.text.includes("Recovery id=")).text.match(/path=(\S+)/)[1]);
+  assert.notEqual(paths[0], paths[1]);
+  assert.deepEqual(await Promise.all(paths.map((path) => readFile(path, "utf8"))), texts);
+  const canonicalRoot = await realpath(root);
+  assert.ok(paths.every((path) => path.startsWith(`${canonicalRoot}/.compact-tool-artifacts/`) && !path.includes("../session")));
+});
+
+test("batch retention emits only exact artifacts still present at handoff", async (t) => {
+  const { lstat, mkdtemp, readFile, readdir, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { createHash } = await import("node:crypto");
+  const root = await mkdtemp(join(tmpdir(), "compact-handoff-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let context;
+  compactTools({ on(name, handler) { if (name === "context") context = handler; }, registerCommand() {}, registerEntryRenderer() {}, appendEntry() {} });
+  const messages = Array.from({ length: 20 }, (_, index) => ({
+    role: "toolResult",
+    toolCallId: `call-${index}`,
+    content: [{ type: "text", text: `${index}:${String(index).repeat(20_002)}` }],
+  }));
+  const result = await context({ messages }, { sessionManager: { getSessionId: () => "handoff", getSessionDir: () => root } });
+  const markers = result.messages.flatMap((message) => message.content ?? []).filter((block) => block.type === "text" && block.text.includes("Recovery id="));
+  assert.ok(markers.length > 0 && markers.length <= 16);
+  for (const marker of markers) {
+    const path = marker.text.match(/path=(\S+)/)[1];
+    const data = await readFile(path);
+    const info = await lstat(path);
+    assert.ok(info.isFile() && !info.isSymbolicLink());
+    assert.match(marker.text, new RegExp(`sha256=${createHash("sha256").update(data).digest("hex")}`));
+    assert.match(marker.text, new RegExp(`utf8Bytes=${data.length}`));
+  }
+  const directory = join(await import("node:fs/promises").then(({ realpath }) => realpath(root)), ".compact-tool-artifacts", createHash("sha256").update("handoff").digest("hex"));
+  const files = await readdir(directory);
+  assert.ok(files.filter((name) => name.endsWith(".txt")).length <= 16);
+  assert.deepEqual(files.filter((name) => name.endsWith(".tmp")), []);
+});
+
+test("recovery markers preserve UTF-8 multiblock output and reuse aggregate artifacts", async (t) => {
+  const { mkdtemp, readFile, readdir, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { createHash } = await import("node:crypto");
+  const root = await mkdtemp(join(tmpdir(), "compact-recovery-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let context;
+  compactTools({ on(name, handler) { if (name === "context") context = handler; }, registerCommand() {}, registerEntryRenderer() {}, appendEntry() {} });
+  const multiText = `α\n${"x".repeat(10_000)}\nβ\n${"y".repeat(10_000)}`;
+  const messages = [
+    { role: "toolResult", toolCallId: "utf8-call", content: [{ type: "text", text: `α\n${"x".repeat(10_000)}` }, { type: "image", data: "not-persisted" }, { type: "text", text: `β\n${"y".repeat(10_000)}` }] },
+    ...Array.from({ length: 5 }, (_, index) => ({ role: "toolResult", toolCallId: `aggregate-${index}`, content: [{ type: "text", text: `${index}:${"z".repeat(14_000)}` }] })),
+  ];
+  const ctx = { sessionManager: { getSessionId: () => "session-test", getSessionDir: () => root } };
+  const first = await context({ messages }, ctx);
+  const marker = first.messages.flatMap((message) => message.content ?? []).find((block) => block.type === "text" && block.text.includes("Recovery id="))?.text;
+  assert.ok(marker);
+  const path = marker.match(/path=(\S+)/)[1];
+  const stored = await readFile(path, "utf8");
+  assert.ok([multiText, ...messages.slice(1).map((message) => message.content[0].text)].includes(stored));
+  assert.match(marker, new RegExp(`sha256=${createHash("sha256").update(stored).digest("hex")}`));
+  assert.match(marker, new RegExp(`utf8Bytes=${Buffer.byteLength(stored)}`));
+  assert.match(marker, /lines=1-\d+ chars=\d+-\d+ omitted=\d+ chars total=\d+/);
+  assert.deepEqual(messages[0].content.filter((block) => block.type === "image"), [{ type: "image", data: "not-persisted" }]);
+  const artifactDirectory = join(root, ".compact-tool-artifacts", createHash("sha256").update("session-test").digest("hex"));
+  const filesBefore = await readdir(artifactDirectory);
+  await context({ messages }, ctx);
+  assert.deepEqual(await readdir(artifactDirectory), filesBefore);
 });
