@@ -36,6 +36,7 @@
   },
   "pi": {
     "extensions": [
+      "./extensions/permissions/index.ts",
       "./extensions/telemetry/index.ts",
       "./extensions/automation-pause/index.ts",
       "./extensions/multi-skills/index.ts",
@@ -61,7 +62,8 @@
       "./vendor/pi-tools/extensions/summaries/index.ts",
       "./vendor/pi-tools/extensions/ui-customization/index.ts",
       "./vendor/pi-tools/extensions/workflows/index.ts",
-      "./extensions/fleet/index.ts"
+      "./extensions/fleet/index.ts",
+      "./extensions/pi-doctor/index.ts"
     ],
     "skills": [
       "./skills/pi-orchestration",
