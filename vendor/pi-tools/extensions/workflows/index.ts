@@ -34,7 +34,17 @@ import {
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import { formatActivityStatus } from "../shared/activity-status.ts";
-import { createWorkflowPersistence, persistWorkflowJson } from "./artifacts.ts";
+import {
+  createWorkflowPersistence,
+  finalizeWorkflowPersistence,
+  persistWorkflowJson,
+} from "./artifacts.ts";
+import {
+  createWorkflowJournal,
+  recoverInterruptedWorkflow,
+  refuseWorkflowResume,
+} from "./journal.ts";
+import { classifyRetry, pausedProviderMetadata } from "./retry.ts";
 import { CHILD_COST_CHANNEL } from "../shared/dashboard-state.ts";
 import { RunController } from "./controller.ts";
 import { sessionWorkflowRunIds, showWorkflowDashboard } from "./dashboard.ts";
@@ -258,6 +268,7 @@ function listRuns(
       continue;
     }
     try {
+      recoverInterruptedWorkflow(path.join(base, runId), false);
       const parsed = JSON.parse(
         fs.readFileSync(path.join(base, runId, "workflow.json"), "utf8"),
       ) as Partial<WorkflowDetails>;
@@ -371,7 +382,15 @@ export default function workflows(pi: ExtensionAPI) {
   };
 
   const fleetStatus = (status: WorkflowDetails["status"]): FleetStatus =>
-    status === "completed" ? "done" : status === "failed" ? "error" : status;
+    status === "completed"
+      ? "done"
+      : status === "running"
+        ? "running"
+        : status === "paused"
+          ? "paused"
+          : status === "aborted"
+            ? "aborted"
+            : "error";
 
   const workflowFleetItems = (
     details: WorkflowDetails,
@@ -388,6 +407,10 @@ export default function workflows(pi: ExtensionAPI) {
       detail: details.currentPhase ?? details.description,
       tokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
       turns: usage.turns,
+      ...(details.paused ? { quotaState: details.paused.reason } : {}),
+      ...(details.agents.some((agent) => (agent.attempts ?? 1) > 1)
+        ? { retryState: "bounded retries exhausted" }
+        : {}),
     };
     return [
       run,
@@ -420,6 +443,12 @@ export default function workflows(pi: ExtensionAPI) {
           agent.usage.cacheWrite,
         turns: agent.usage.turns,
         maxTurns: agent.maxTurns,
+        ...((agent.attempts ?? 1) > 1
+          ? { retryState: `${agent.attempts} attempts` }
+          : {}),
+        ...(agent.providerError?.code
+          ? { quotaState: agent.providerError.code }
+          : {}),
       })),
     ];
   };
@@ -518,6 +547,16 @@ export default function workflows(pi: ExtensionAPI) {
       "List workflow runs (`/workflows <runId>` for one run's detail)",
     handler: async (rawArgs, ctx) => {
       const arg = rawArgs.trim();
+      if (arg.startsWith("resume ")) {
+        const runId = arg.slice(7).trim();
+        ctx.ui.notify(
+          runId
+            ? refuseWorkflowResume(runId)
+            : "Usage: /workflows resume <runId>",
+          "warning",
+        );
+        return;
+      }
       if (ctx.mode === "tui") {
         lastUi = ctx.ui;
         await showWorkflowDashboard(ctx, activeDetails, arg || undefined);
@@ -609,6 +648,8 @@ export default function workflows(pi: ExtensionAPI) {
         writeRunFile(runDir, "args.json", params.args);
       persistWorkflowJson(runDir, details);
       const persistence = createWorkflowPersistence(runDir, details);
+      const journal = createWorkflowJournal(runDir, runId);
+      journal.event("start");
 
       // Background runs survive Esc on the parent turn, but all runs are
       // aborted and settled during session shutdown.
@@ -647,6 +688,7 @@ export default function workflows(pi: ExtensionAPI) {
       let lastEmit = 0;
       const flush = () => {
         emitTimer = undefined;
+        if (!controller.isCurrent(controller.captureGeneration())) return;
         lastEmit = Date.now();
         for (const agent of details.agents) {
           pi.events.emit(CHILD_COST_CHANNEL, {
@@ -663,6 +705,7 @@ export default function workflows(pi: ExtensionAPI) {
         });
       };
       const emit = (checkpoint = true) => {
+        if (!controller.isCurrent(controller.captureGeneration())) return;
         if (checkpoint) persistence.checkpoint();
         if (emitTimer) return;
         emitTimer = setTimeout(
@@ -676,10 +719,13 @@ export default function workflows(pi: ExtensionAPI) {
       };
 
       const phaseFn = (title: unknown) => {
+        const generation = controller.captureGeneration();
+        if (!controller.isCurrent(generation)) return;
         const text = String(title);
         details.currentPhase = text;
         if (!details.phases.some((p) => p.title === text))
           details.phases.push({ title: text });
+        journal.event("phase", { phase: text });
         emit();
       };
 
@@ -689,6 +735,9 @@ export default function workflows(pi: ExtensionAPI) {
         optsValue: unknown = {},
         invocationSignal?: AbortSignal,
       ): Promise<ScriptAgentResult> => {
+        const generation = controller.captureGeneration();
+        if (!controller.isCurrent(generation))
+          return { ok: false, output: "", error: "Workflow is settling" };
         const index = ++agentCounter;
         const opts: AgentCallOptions =
           optsValue && typeof optsValue === "object"
@@ -718,6 +767,7 @@ export default function workflows(pi: ExtensionAPI) {
           transcript: [],
         };
         details.agents.push(record);
+        journal.event("call-start", { call: index, phase: record.phase });
         persistence.checkpoint({ immediate: true });
         emit(false);
 
@@ -830,6 +880,8 @@ export default function workflows(pi: ExtensionAPI) {
 
         return controller
           .schedule(async (runSignal) => {
+            if (!controller.isCurrent(generation))
+              return { ok: false, output: "", error: "Workflow is settling" };
             // Model/provider resolution: default to the parent session's model.
             let model: WorkflowModel | undefined = ctx.model;
             if (opts.model !== undefined || opts.provider !== undefined) {
@@ -914,6 +966,7 @@ export default function workflows(pi: ExtensionAPI) {
                   signal: runSignal,
                   maxTurns,
                   onProgress: (progress) => {
+                    if (!controller.isCurrent(generation)) return;
                     record.preview = progress.preview.slice(0, PREVIEW_LENGTH);
                     record.usage = addUsage(priorUsage, progress.usage);
                     record.model = progress.model ?? record.model;
@@ -929,6 +982,7 @@ export default function workflows(pi: ExtensionAPI) {
                 });
               },
               onAttempt: (attemptOutcome, attempt) => {
+                if (!controller.isCurrent(generation)) return;
                 record.usage = addUsage(priorUsage, attemptOutcome.usage);
                 record.transcript = mergeContinuationTranscript(
                   priorTranscript,
@@ -940,6 +994,8 @@ export default function workflows(pi: ExtensionAPI) {
               },
             });
             const outcome = attempts.outcome;
+            if (!controller.isCurrent(generation))
+              return { ok: false, output: "", error: "Workflow is settling" };
 
             const outcomeError =
               outcome.aborted && runSignal.reason instanceof Error
@@ -953,12 +1009,26 @@ export default function workflows(pi: ExtensionAPI) {
               PREVIEW_LENGTH,
             );
             record.finishedAt = Date.now();
+            record.attempts = attempts.attempts;
+            record.providerError = outcome.providerError;
             record.state = outcome.ok ? "done" : "error";
             if (outcome.ok) {
               delete record.error;
             } else {
               record.error = outcomeError ?? "Agent failed";
+              const retry = classifyRetry(record.error, outcome.providerError);
+              record.retryCategory = retry.category;
+              if (retry.category === "quota") {
+                details.paused = pausedProviderMetadata(outcome.providerError);
+                details.error = "Provider quota paused";
+                controller.abort("Provider quota pause");
+              }
             }
+            journal.event(outcome.ok ? "call-done" : "call-error", {
+              call: index,
+              phase: record.phase,
+              ...(outcome.ok ? {} : { reason: record.error?.slice(0, 512) }),
+            });
             emit();
 
             return {
@@ -970,9 +1040,14 @@ export default function workflows(pi: ExtensionAPI) {
               ...(outcomeError !== undefined ? { error: outcomeError } : {}),
             };
           }, agentSignal)
-          .catch((error) => fail(errorText(error)))
+          .catch((error) =>
+            controller.isCurrent(generation)
+              ? fail(errorText(error))
+              : { ok: false, output: "", error: "Workflow is settling" },
+          )
           .finally(() => {
             if (timeout) clearTimeout(timeout);
+            if (!controller.isCurrent(generation)) return;
             const category = categorizeTelemetryError(record.error);
             const status =
               record.state === "done"
@@ -1015,10 +1090,17 @@ export default function workflows(pi: ExtensionAPI) {
           }
         } catch (error) {
           details.error = errorText(error);
-          status = controller.signal.aborted ? "aborted" : "failed";
+          status = details.paused
+            ? "paused"
+            : controller.signal.aborted
+              ? "aborted"
+              : "failed";
           controller.abort("Workflow script failed");
         }
 
+        controller.seal();
+        if (emitTimer) clearTimeout(emitTimer);
+        emitTimer = undefined;
         const settled = await controller.settle({
           abort: status !== "completed",
         });
@@ -1035,17 +1117,12 @@ export default function workflows(pi: ExtensionAPI) {
             record.error ?? "Agent did not settle before run cleanup";
           record.finishedAt = Date.now();
         }
-        details.status = status;
-        details.finishedAt = Date.now();
-        try {
-          persistence.flush();
-        } catch (error) {
-          details.status = "failed";
-          details.error = `Artifact persistence failed: ${errorText(error)}`;
-          throw new Error(details.error);
-        } finally {
-          flushNow();
-        }
+        status = finalizeWorkflowPersistence(
+          details,
+          status,
+          persistence,
+          journal,
+        );
       };
 
       // Registered for /workflows visibility and session_shutdown abort;
@@ -1067,7 +1144,19 @@ export default function workflows(pi: ExtensionAPI) {
           type: "workflow_run",
           runId,
           phase: "settle",
-          status: details.status,
+          status:
+            details.status === "completed"
+              ? "completed"
+              : details.status === "running"
+                ? "running"
+                : details.status === "aborted" || details.status === "paused"
+                  ? "aborted"
+                  : "failed",
+          ...(details.status === "paused"
+            ? {
+                error: `paused:quota:${details.paused?.reason ?? "Provider quota exhausted"}`,
+              }
+            : {}),
           durationMs: Math.max(
             0,
             (details.finishedAt ?? Date.now()) - details.startedAt,

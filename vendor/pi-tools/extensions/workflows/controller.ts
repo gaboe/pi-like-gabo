@@ -81,6 +81,7 @@ export class RunController {
   private readonly tasks = new Set<Promise<unknown>>();
   private callCount = 0;
   private sealed = false;
+  private generation = 1;
   private parentAbort?: () => void;
   private parentSignal?: AbortSignal;
 
@@ -107,6 +108,26 @@ export class RunController {
     return this.callCount;
   }
 
+  captureGeneration() {
+    return this.generation;
+  }
+
+  isCurrent(generation: number) {
+    return !this.sealed && generation === this.generation;
+  }
+
+  commit(generation: number, mutation: () => void) {
+    if (!this.isCurrent(generation)) return false;
+    mutation();
+    return true;
+  }
+
+  seal() {
+    if (this.sealed) return this.generation;
+    this.sealed = true;
+    return ++this.generation;
+  }
+
   reserveCall(): void {
     if (this.sealed) throw new Error("Workflow is settling");
     if (this.signal.aborted) throw abortError(this.signal);
@@ -119,9 +140,10 @@ export class RunController {
   }
 
   schedule<T>(
-    task: (signal: AbortSignal) => Promise<T>,
+    task: (signal: AbortSignal, generation: number) => Promise<T>,
     invocationSignal?: AbortSignal,
   ): Promise<T> {
+    const generation = this.captureGeneration();
     try {
       this.reserveCall();
     } catch (error) {
@@ -144,7 +166,7 @@ export class RunController {
         await this.semaphore.acquire(taskAbort.signal);
         acquired = true;
         if (taskAbort.signal.aborted) throw abortError(taskAbort.signal);
-        const result = await task(taskAbort.signal);
+        const result = await task(taskAbort.signal, generation);
         if (invocationSignal?.aborted) throw abortError(invocationSignal);
         return result;
       } finally {
@@ -165,7 +187,7 @@ export class RunController {
 
   /** Seal the task registry and wait a bounded time for every task to settle. */
   async settle(options: { abort?: boolean; timeoutMs?: number } = {}) {
-    this.sealed = true;
+    this.seal();
     if (options.abort) this.abort();
     const tasks = [...this.tasks];
     if (tasks.length === 0) {

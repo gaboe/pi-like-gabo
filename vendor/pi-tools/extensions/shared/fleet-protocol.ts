@@ -3,7 +3,7 @@ export const FLEET_STATE_CHANNEL = "fleet:state:v1";
 export const FLEET_OPEN_CHANNEL = "fleet:open:v1";
 export const FLEET_SETTLED_LINGER_MS = 4_000;
 
-export type FleetStatus = "running" | "done" | "error" | "aborted";
+export type FleetStatus = "running" | "paused" | "done" | "error" | "aborted";
 
 interface FleetItemBase {
   id: string;
@@ -11,6 +11,10 @@ interface FleetItemBase {
   status: FleetStatus;
   startedAt: number;
   settledAt?: number;
+  updatedAt?: number;
+  lastActivityAt?: number;
+  retryState?: string;
+  quotaState?: string;
   detail?: string;
   tokens?: number;
   turns?: number;

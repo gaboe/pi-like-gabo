@@ -149,6 +149,23 @@ function normalizeDetails(
         Number.isInteger(a.continuationsUsed)
           ? a.continuationsUsed
           : undefined,
+      attempts:
+        typeof a.attempts === "number" &&
+        Number.isInteger(a.attempts) &&
+        a.attempts > 0
+          ? a.attempts
+          : undefined,
+      retryCategory:
+        a.retryCategory === "transient_startup" ||
+        a.retryCategory === "transport" ||
+        a.retryCategory === "quota" ||
+        a.retryCategory === "timeout" ||
+        a.retryCategory === "validation" ||
+        a.retryCategory === "policy" ||
+        a.retryCategory === "deterministic" ||
+        a.retryCategory === "unknown"
+          ? a.retryCategory
+          : undefined,
       usage: {
         input: 0,
         output: 0,
@@ -180,10 +197,26 @@ function normalizeDetails(
 
   const status =
     record.status === "running" ||
+    record.status === "paused" ||
     record.status === "failed" ||
     record.status === "aborted"
       ? record.status
       : "completed";
+  const pausedRecord =
+    record.paused && typeof record.paused === "object"
+      ? (record.paused as Record<string, unknown>)
+      : undefined;
+  const pausedReason = pausedRecord?.reason;
+  const pausedProvider = pausedRecord?.provider;
+  const paused =
+    typeof pausedReason === "string"
+      ? {
+          ...(typeof pausedProvider === "string"
+            ? { provider: pausedProvider }
+            : {}),
+          reason: pausedReason,
+        }
+      : undefined;
 
   return {
     runId,
@@ -220,6 +253,7 @@ function normalizeDetails(
         ? record.transcriptArtifact
         : undefined,
     error: typeof record.error === "string" ? record.error : undefined,
+    paused,
   };
 }
 

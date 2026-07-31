@@ -53,6 +53,37 @@ test("historical dashboard run IDs and entries stay cached across live refreshes
   }
 });
 
+test("paused dashboard artifact round-trips and accepts prior artifact shape", () => {
+  const directory = mkdtempSync(join(tmpdir(), "pi-workflow-dashboard-"));
+  try {
+    const runId = "wf_paused";
+    mkdirSync(join(directory, runId));
+    writeRun(directory, runId, {
+      sessionId: "session",
+      status: "paused",
+      paused: { provider: "openai", reason: "Provider quota (rate_limit)" },
+      startedAt: 1,
+      phases: [],
+      agents: [{ index: 1, label: "agent", state: "error", startedAt: 1 }],
+    });
+    const entry = loadRunEntries(
+      new Map(),
+      "session",
+      new Set(),
+      new Map(),
+      directory,
+    )[0]?.details;
+    assert.equal(entry?.status, "paused");
+    assert.deepEqual(entry?.paused, {
+      provider: "openai",
+      reason: "Provider quota (rate_limit)",
+    });
+    assert.equal(entry?.agents[0]?.attempts, undefined);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("former live run reads once and recovers stale state", () => {
   const directory = mkdtempSync(join(tmpdir(), "pi-workflow-dashboard-"));
   try {

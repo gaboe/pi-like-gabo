@@ -76,3 +76,23 @@ test("RunController enforces call budget and aborts queued tasks", async () => {
   assert.ok(results.every((result) => result.status === "rejected"));
   assert.equal(await controller.settle({ abort: true }), true);
 });
+
+test("late settled callback cannot mutate authoritative outputs", async () => {
+  const controller = new RunController();
+  const touched: string[] = [];
+  let release!: () => void;
+  const delayed = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const task = controller.schedule(async (_signal, generation) => {
+    await delayed;
+    controller.commit(generation, () =>
+      touched.push("record", "artifact", "journal", "fleet", "telemetry"),
+    );
+  });
+  controller.seal();
+  assert.equal(await controller.settle({ timeoutMs: 0 }), false);
+  release();
+  await task;
+  assert.deepEqual(touched, []);
+});

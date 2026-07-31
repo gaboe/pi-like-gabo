@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Editor } from "@earendil-works/pi-tui";
-import { aggregateFleetStates, FleetView } from "./fleet-view.ts";
+import { aggregateFleetStates, FleetView, isStale, STALE_AFTER_MS } from "./fleet-view.ts";
+import { CostWarningPolicy, DEFAULT_COST_WARNING_THRESHOLD, parseCostWarningThreshold } from "./cost-policy.ts";
 
 const DOWN = "\x1b[B";
 const UP = "\x1b[A";
@@ -143,6 +144,29 @@ test("fleet aggregation combines producers and expires settled metadata", () => 
     items.map((item) => item.id),
     ["wf-1", "wf-1:1", "recent-sub", "job-1", "running-sub"],
   );
+});
+
+test("cost warning fires once, rearms, and resets per session", () => {
+  const policy = new CostWarningPolicy(10);
+  assert.equal(policy.observe(9), false);
+  assert.equal(policy.observe(10), true);
+  assert.equal(policy.observe(11), false);
+  assert.equal(policy.observe(9), false);
+  assert.equal(policy.observe(10), true);
+  policy.reset();
+  assert.equal(policy.observe(10), true);
+  assert.equal(parseCostWarningThreshold(undefined), DEFAULT_COST_WARNING_THRESHOLD);
+  assert.equal(parseCostWarningThreshold(""), DEFAULT_COST_WARNING_THRESHOLD);
+  assert.equal(new CostWarningPolicy().threshold, DEFAULT_COST_WARNING_THRESHOLD);
+  assert.equal(parseCostWarningThreshold("nope"), undefined);
+  assert.equal(policy.observe(Number.NaN), false);
+});
+
+test("fleet stale boundary requires truthful activity timestamps", () => {
+  const item = state().items[0];
+  assert.equal(isStale(item, 10 + STALE_AFTER_MS), false);
+  assert.equal(isStale({ ...item, updatedAt: 100 }, 100 + STALE_AFTER_MS - 1), false);
+  assert.equal(isStale({ ...item, lastActivityAt: 100 }, 100 + STALE_AFTER_MS), true);
 });
 
 test("fleet keys enter, navigate, open, escape, and pass normal input through", () => {
