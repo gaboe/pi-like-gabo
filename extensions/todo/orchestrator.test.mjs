@@ -27,6 +27,8 @@ it("guides non-blocking subagents without banning dependency waits", async () =>
   assert.match(ORCHESTRATOR_GUIDANCE, /only background work remains.*completion delivery/);
   assert.match(ORCHESTRATOR_GUIDANCE, /subagent_wait only for already-settled collection, non-interactive execution, or a concrete dependency\/result-freshness gate/);
   assert.match(ORCHESTRATOR_GUIDANCE, /do not blanket-ban waiting when a concrete dependency exists/);
+  assert.match(ORCHESTRATOR_GUIDANCE, /task-local direct TODO remains parent-owned.*aggregate mode is sticky/);
+  assert.match(ORCHESTRATOR_GUIDANCE, /never edit reserved orchestration metadata/);
 });
 
 it("calls the classifier for raw and prepared dossiers", async () => {

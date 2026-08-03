@@ -119,6 +119,18 @@ export interface TodoRuntimeHooks {
   orchestrator?: () => OrchestratorSetting;
 }
 
+const RESERVED_METADATA_KEYS = new Set([
+  "delegation",
+  "orchestrator",
+  "preparation",
+]);
+
+function reservedMetadataKey(params: TaskMutationParams): string | undefined {
+  return Object.keys(params.metadata ?? {}).find((key) =>
+    RESERVED_METADATA_KEYS.has(key),
+  );
+}
+
 export function registerTodoTool(
   pi: ExtensionAPI,
   hooks: TodoRuntimeHooks = {},
@@ -145,6 +157,13 @@ export function registerTodoTool(
       try {
         let current = getState();
         const inputParams = params as TaskMutationParams;
+        const reservedKey = reservedMetadataKey(inputParams);
+        if (reservedKey) {
+          return buildToolResult(params.action, inputParams, current, {
+            kind: "error",
+            message: `metadata.${reservedKey} is reserved for pi-plugins; use the task's classified mode instead of editing orchestration metadata`,
+          });
+        }
         const mutationParams: TaskMutationParams =
           params.action === "create"
             ? {

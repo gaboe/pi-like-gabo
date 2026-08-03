@@ -702,8 +702,10 @@ export class TodoScheduler {
       return "package_handoff assignment requires a ready matching unresolved TODO incarnation.";
     const mode = (task.metadata?.orchestrator as { mode?: unknown } | undefined)
       ?.mode;
-    if (setting === "off" || (mode !== "provisional" && mode !== "sticky"))
-      return "package_handoff assignment requires the target TODO's own provisional or sticky orchestrator mode.";
+    if (setting === "off")
+      return "package_handoff assignment is disabled because orchestrator setting is off.";
+    if (mode !== "provisional" && mode !== "sticky")
+      return "package_handoff target TODO is direct. Execute it in the parent; do not assign a Package Worker or edit reserved orchestration metadata.";
     return undefined;
   }
 

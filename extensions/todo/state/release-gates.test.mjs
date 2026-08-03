@@ -146,6 +146,41 @@ describe("release orchestration gates", () => {
     assert.doesNotMatch(fetched.content[0].text, new RegExp(token));
   });
 
+  it("rejects tool mutations of reserved orchestration metadata", async () => {
+    __resetState();
+    commitState({
+      tasks: [
+        task("in_progress", {
+          metadata: {
+            preparation: { status: "ready", token: "prep-secret" },
+            orchestrator: { mode: "direct" },
+          },
+        }),
+      ],
+      nextId: 2,
+      revision: 1,
+    });
+    let tool;
+    registerTodoTool({
+      registerTool(definition) {
+        tool = definition;
+      },
+      appendEntry() {},
+    });
+    const before = structuredClone(getState());
+    for (const key of ["delegation", "orchestrator", "preparation"]) {
+      const result = await tool.execute(
+        "update",
+        { action: "update", id: 1, metadata: { [key]: "sticky" } },
+        undefined,
+        undefined,
+        { cwd: "/repo" },
+      );
+      assert.match(result.content[0].text, new RegExp(`metadata\\.${key} is reserved`));
+      assert.deepEqual(getState(), before);
+    }
+  });
+
   it("fails package assignment closed while ordinary scouts bypass gate", () => {
     assert.equal(
       validateSubagentAssignment(undefined, undefined, undefined),
@@ -250,7 +285,7 @@ describe("release orchestration gates", () => {
     );
     assert.match(
       scheduler.packageAssignmentError(1, "prep-secret", "off"),
-      /provisional or sticky/,
+      /orchestrator setting is off/,
     );
     scheduler.dispose();
     adapter.dispose();
@@ -294,7 +329,7 @@ describe("release orchestration gates", () => {
     try {
       assert.match(
         scheduler.packageAssignmentError(1, "direct-token", "auto"),
-        /target TODO's own provisional or sticky/,
+        /target TODO is direct.*Execute it in the parent/,
       );
       assert.equal(
         scheduler.packageAssignmentError(2, "sticky-token", "auto"),
@@ -317,7 +352,7 @@ describe("release orchestration gates", () => {
             },
           },
         ),
-        /target TODO's own provisional or sticky/,
+        /target TODO is direct.*Execute it in the parent/,
       );
       assert.deepEqual(bodies, { manager: 0, spawn: 0, cancel: 0 });
     } finally {

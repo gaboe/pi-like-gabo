@@ -165,7 +165,8 @@ export const TodoParamsSchema = Type.Object({
 	owner: Type.Optional(Type.String({ description: "Agent/owner assigned to this task" })),
 	metadata: Type.Optional(
 		Type.Record(Type.String(), Type.Unknown(), {
-			description: "Arbitrary metadata; pass null value for a key to delete that key on update",
+			description:
+				"Arbitrary metadata except reserved orchestration keys; pass null value for a key to delete that key on update",
 		}),
 	),
 	id: Type.Optional(
