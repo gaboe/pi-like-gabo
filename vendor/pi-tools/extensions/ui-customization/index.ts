@@ -168,14 +168,12 @@ export function arrangeFooterStatuses(
   usage: string,
   statuses: ReadonlyMap<string, string>,
 ) {
-  const inline = ["caveman", "ponytail"]
-    .map((key) => statuses.get(key))
-    .filter((text): text is string => Boolean(text));
+  const hidden = new Set(["caveman", "ponytail", "ext:nested-agents:status"]);
   const remaining = Array.from(statuses.entries())
-    .filter(([key]) => key !== "caveman" && key !== "ponytail")
+    .filter(([key]) => !hidden.has(key))
     .sort(([a], [b]) => a.localeCompare(b))
     .flatMap(([, text]) => text.split("\n"));
-  return { usage: [usage, ...inline].join(" · "), remaining };
+  return { usage, remaining };
 }
 
 function columns(left: string, right: string, width: number) {
