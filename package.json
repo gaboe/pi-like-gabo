@@ -63,7 +63,8 @@
       "./vendor/pi-tools/extensions/ui-customization/index.ts",
       "./vendor/pi-tools/extensions/workflows/index.ts",
       "./extensions/fleet/index.ts",
-      "./extensions/pi-doctor/index.ts"
+      "./extensions/pi-doctor/index.ts",
+      "./node_modules/pi-lens/dist/index.js"
     ],
     "skills": [
       "./skills/pi-orchestration",
@@ -94,8 +95,12 @@
     "typebox": "^1.3.6",
     "typescript": "^7.0.2"
   },
+  "bundledDependencies": [
+    "pi-lens"
+  ],
   "dependencies": {
     "jsonpath-plus": "^10.4.0",
+    "pi-lens": "git+https://github.com/gaboe/pi-lens.git#b788b83a22c94f5d9ffea37f87d6ade567addc70",
     "re2js": "^2.8.6",
     "undici": "^8.7.0",
     "ws": "^8.21.1"
