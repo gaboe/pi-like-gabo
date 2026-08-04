@@ -100,6 +100,8 @@
     "pi-lens"
   ],
   "dependencies": {
+    "@effect/platform-node": "4.0.0-beta.99",
+    "@effect/platform-node-shared": "4.0.0-beta.99",
     "acorn": "8.17.0",
     "effect": "4.0.0-beta.99",
     "firecrawl": "4.30.1",
