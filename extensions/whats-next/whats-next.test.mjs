@@ -8,6 +8,7 @@ function setup(run, tasks = []) {
   const requests = [];
   const messages = [];
   const userMessages = [];
+  const statuses = [];
   const unregister = registerBackgroundSubagentService({
     async run(request) {
       requests.push(request);
@@ -29,6 +30,10 @@ function setup(run, tasks = []) {
   });
   const ctx = {
     cwd: "/work",
+    ui: {
+      theme: { fg: (_color, value) => value },
+      setStatus: (key, value) => statuses.push({ key, value }),
+    },
     model: { provider: "openai-codex", id: "gpt-5.6-sol" },
     modelRegistry: {},
     isProjectTrusted: () => true,
@@ -39,7 +44,7 @@ function setup(run, tasks = []) {
       ],
     },
   };
-  return { command, ctx, messages, userMessages, requests, cleanup: () => { unregister(); __resetState(); } };
+  return { command, ctx, messages, userMessages, requests, statuses, cleanup: () => { unregister(); __resetState(); } };
 }
 
 test("runs exactly one tool-free Terra review and renders verified completion", async () => {
@@ -58,6 +63,10 @@ test("runs exactly one tool-free Terra review and renders verified completion", 
     assert.equal(fixture.requests[0].noExtensions, true);
     assert.match(fixture.requests[0].prompt, /"focus":"release readiness"/);
     assert.match(fixture.requests[0].prompt, /always review the full session and all TODOs/);
+    assert.deepEqual(fixture.statuses, [
+      { key: "whats-next", value: "⏳ Reviewing next steps…" },
+      { key: "whats-next", value: undefined },
+    ]);
     assert.equal(fixture.messages[0].content, "Nič ďalšie. Session môžeme ukončiť.");
   } finally {
     fixture.cleanup();
@@ -184,6 +193,7 @@ test("reports subagent failure instead of claiming completion", async () => {
   try {
     await fixture.command.handler("", fixture.ctx);
     assert.equal(fixture.messages[0].content, "Unable to assess next steps: model unavailable");
+    assert.equal(fixture.statuses.at(-1).value, undefined);
   } finally {
     fixture.cleanup();
   }
