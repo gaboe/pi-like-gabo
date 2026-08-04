@@ -107,7 +107,7 @@
     "firecrawl": "4.30.1",
     "jsonpath-plus": "^10.4.0",
     "pi-caveman": "git+https://github.com/jonjonrankin/pi-caveman.git#0d4c639d672b0b80afaa035f582152dcab9c6a8f",
-    "pi-lens": "git+https://github.com/gaboe/pi-lens.git#b788b83a22c94f5d9ffea37f87d6ade567addc70",
+    "pi-lens": "git+https://github.com/gaboe/pi-lens.git#07a0558133586c1b9b593ef4ff76c90c4c0e6ec7",
     "re2js": "^2.8.6",
     "undici": "^8.7.0",
     "ws": "^8.21.1"
