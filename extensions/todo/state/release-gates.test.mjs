@@ -27,6 +27,21 @@ import { buildToolResult } from "../tool/response-envelope.ts";
 import { SUBAGENT_DELEGATION_STATE_CHANNEL } from "../../../vendor/pi-tools/extensions/shared/subagent-wait-protocol.ts";
 import { registerBackgroundSubagentService } from "../../../vendor/pi-tools/extensions/shared/background-subagent-protocol.ts";
 
+const approvedReview = () => ({
+  status: "approved",
+  generation: 1,
+  token: "review-token",
+  completionRevision: 1,
+  requestedAt: 1,
+  dispatchedAt: 2,
+  completedAt: 3,
+  reviewer: {
+    id: "todo-completion-reviewer",
+    model: "openai-codex/gpt-5.6-luna",
+  },
+  feedback: "verified",
+});
+
 const task = (status = "pending", extra = {}) => ({
   id: 1,
   subject: "Package",
@@ -49,6 +64,9 @@ class Bus {
 
 function owned(status = "in_progress", delegation = "running") {
   return task(status, {
+    ...(status === "completed"
+      ? { result: "done", evidence: ["verified"], review: approvedReview() }
+      : {}),
     metadata: {
       preparation: { status: "ready", token: "prep-secret" },
       orchestrator: { mode: "sticky" },
@@ -618,6 +636,8 @@ describe("release orchestration gates", () => {
     const completion = applyTaskMutation(waiting, "update", {
       id: 1,
       status: "completed",
+      result: "done",
+      evidence: ["verified"],
     });
     assert.equal(completion.op.kind, "error");
     assert.match(completion.op.message, /jobs wait remains active/);
@@ -658,7 +678,15 @@ describe("release orchestration gates", () => {
     });
     commitState({
       ...getState(),
-      tasks: [{ ...getState().tasks[0], status: "completed" }],
+      tasks: [
+        {
+          ...getState().tasks[0],
+          status: "completed",
+          result: "done",
+          evidence: ["verified"],
+          review: approvedReview(),
+        },
+      ],
       revision: getState().revision + 1,
     });
     scheduler.stateChanged();
@@ -667,7 +695,7 @@ describe("release orchestration gates", () => {
     assert.equal(getState().tasks[0].metadata.delegation.status, "cancelled");
     assert.equal(
       sent.filter(
-        (message) => message.customType === "rpiv-todo:completion-review",
+        (message) => message.customType === "rpiv-todo:completion-report",
       ).length,
       1,
     );
@@ -680,7 +708,7 @@ describe("release orchestration gates", () => {
     assert.equal(getState().tasks[0].metadata.delegation.status, "cancelled");
     assert.equal(
       sent.filter(
-        (message) => message.customType === "rpiv-todo:completion-review",
+        (message) => message.customType === "rpiv-todo:completion-report",
       ).length,
       1,
     );
@@ -778,7 +806,7 @@ describe("release orchestration gates", () => {
       assert.equal(hasCompletedBatch(), true);
       assert.equal(
         sent.filter(
-          ({ customType }) => customType === "rpiv-todo:completion-review",
+          ({ customType }) => customType === "rpiv-todo:completion-report",
         ).length,
         1,
       );
@@ -861,7 +889,7 @@ describe("release orchestration gates", () => {
       );
       assert.equal(
         sent.filter(
-          (message) => message.customType === "rpiv-todo:completion-review",
+          (message) => message.customType === "rpiv-todo:completion-report",
         ).length,
         1,
       );
@@ -888,7 +916,7 @@ describe("release orchestration gates", () => {
       );
       assert.equal(
         sent.filter(
-          (message) => message.customType === "rpiv-todo:completion-review",
+          (message) => message.customType === "rpiv-todo:completion-report",
         ).length,
         1,
       );
@@ -973,6 +1001,9 @@ describe("release orchestration gates", () => {
         {
           ...current,
           status: "completed",
+          result: "done",
+          evidence: ["verified"],
+          review: approvedReview(),
           metadata: {
             ...current.metadata,
             delegation: { ...current.metadata.delegation, status: "cancelled" },
@@ -990,7 +1021,7 @@ describe("release orchestration gates", () => {
     );
     assert.deepEqual(
       sent.map(({ customType }) => customType),
-      ["rpiv-todo:completion-review"],
+      ["rpiv-todo:completion-report"],
     );
     scheduler.dispose();
     adapter.dispose();

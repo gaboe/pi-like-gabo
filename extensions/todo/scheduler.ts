@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -26,15 +28,97 @@ import {
   nextJobDeadline,
   recoverInterruptedPreparations,
 } from "./state/waits.js";
-import type { JobStateEvent } from "./tool/types.js";
+import type { JobStateEvent, Task } from "./tool/types.js";
 import { getBackgroundSubagentService } from "../../vendor/pi-tools/extensions/shared/background-subagent-protocol.js";
+import {
+  claimCompletionReview,
+  failCompletionReview,
+  settleCompletionReview,
+  type CompletionReviewIdentity,
+} from "./state/state-reducer.js";
 import {
   stickyOrchestrator,
   type OrchestratorSetting,
 } from "./orchestrator.js";
-import { isTaskArchivable } from "./state/completion.js";
+import {
+  COMPLETION_REVIEW_MODEL,
+  isTaskArchivable,
+} from "./state/completion.js";
 
 const FULL_SNAPSHOT_INTERVAL = 100;
+const REVIEW_DIFF_LIMIT = 24_000;
+const CHATGPT_PRO_USAGE_LIMIT =
+  "You have hit your ChatGPT usage limit (pro plan).";
+
+export function isChatGptProUsageLimit(errorMessage: unknown): boolean {
+  return (
+    typeof errorMessage === "string" &&
+    errorMessage.startsWith(CHATGPT_PRO_USAGE_LIMIT)
+  );
+}
+const execFileAsync = promisify(execFile);
+
+export function parseCompletionReviewResponse(response: string):
+  | { decision: "approved" | "rejected"; feedback: string }
+  | undefined {
+  const trimmed = response.trim();
+  const json = trimmed.startsWith("```")
+    ? trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")
+    : trimmed;
+  try {
+    const value = JSON.parse(json) as Record<string, unknown>;
+    if (
+      (value.decision !== "approved" && value.decision !== "rejected") ||
+      typeof value.feedback !== "string" ||
+      !value.feedback.trim()
+    )
+      return undefined;
+    return { decision: value.decision, feedback: value.feedback.trim() };
+  } catch {
+    return undefined;
+  }
+}
+
+async function boundedGitDiff(cwd: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["diff", "--no-ext-diff", "--unified=3", "--"],
+      { cwd, maxBuffer: REVIEW_DIFF_LIMIT * 4 },
+    );
+    const diff = String(stdout);
+    if (!diff) return "(current git diff is empty)";
+    return diff.length <= REVIEW_DIFF_LIMIT
+      ? diff
+      : `${diff.slice(0, REVIEW_DIFF_LIMIT)}\n[diff truncated at ${REVIEW_DIFF_LIMIT} characters]`;
+  } catch (error) {
+    return `(current git diff unavailable: ${String(error).slice(0, 512)})`;
+  }
+}
+
+export function completionReviewPrompt(task: Task, diff: string): string {
+  return `Independently review completion of TODO #${task.id}. Judge only whether implementation and evidence satisfy original TODO. Reject concrete gaps; do not perform implementation. For example, reject a documentation TODO that requested a Mermaid diagram or GitHub links when the reported result or diff omits them, even if other edits are correct.
+
+Original TODO subject:
+${task.subject}
+
+Original TODO description:
+${task.description ?? "(none)"}
+
+Completion result:
+${task.result ?? "(missing)"}
+
+Completion evidence:
+${(task.evidence ?? []).map((entry) => `- ${entry}`).join("\n") || "(missing)"}
+
+Bounded current git diff snapshot:
+\`\`\`diff
+${diff}
+\`\`\`
+
+Return exactly one JSON object with no extra text:
+{"decision":"approved|rejected","feedback":"Concrete review findings and rationale."}`;
+}
 
 export function persistTodoSnapshot(
   pi: Pick<ExtensionAPI, "appendEntry">,
@@ -83,7 +167,7 @@ export class AutoContinuationGuard {
   }
 }
 
-const COMPLETION_REVIEW = `All visible TODOs are marked completed. Review them against the user's request and verification evidence. If work is missing, create TODOs for it and continue. If everything is complete, call todo clear to archive the finished batch, then send one context-preserving completion report with:
+const COMPLETION_REPORT = `All visible TODOs passed independent completion review. Call todo clear to archive the approved batch, then send one context-preserving completion report with:
 - Outcome: what the user can do now.
 - Before → now: the important behavior change and root cause.
 - Key code changes: affected paths plus short before/after or diff snippets for non-trivial code changes; omit this section when no code changed and never dump a large raw diff.
@@ -139,6 +223,7 @@ export function actionableContinuation(state = getState()): string {
 
 export class TodoScheduler {
   private active = false;
+  private context: ExtensionContext | undefined;
   private generation = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private continuationPending = false;
@@ -629,6 +714,7 @@ export class TodoScheduler {
   activate(ctx: ExtensionContext, resetAutomation = true): void {
     this.generation++;
     this.active = true;
+    this.context = ctx;
     if (resetAutomation) {
       this.automationPaused = false;
       this.continuationPending = false;
@@ -650,6 +736,7 @@ export class TodoScheduler {
     if (this.invalidateStaleWorkerOwners()) this.stateChanged(false);
     this.expireDeadlines();
     this.armDeadline();
+    this.scheduleCompletionReviews();
     const generation = this.generation;
     void this.reconcileJobs(generation).finally(() => {
       if (generation === this.generation && hasActionableTasks(getState())) {
@@ -782,16 +869,90 @@ export class TodoScheduler {
       this.interruptedWorkerOwners.delete(subagentId);
   }
 
-  private requestCompletionReview(deliverAs: "steer" | "followUp"): void {
+  private commitReviewState(next: ReturnType<typeof getState>): boolean {
+    if (next === getState()) return false;
+    persistTodoSnapshot(this.pi, next);
+    commitState(next);
+    return true;
+  }
+
+  private scheduleCompletionReviews(): void {
+    const ctx = this.context;
+    if (!this.active || !ctx) return;
+    for (const task of getState().tasks) {
+      if (task.review?.status !== "pending" || task.review.dispatchedAt !== undefined)
+        continue;
+      void this.runCompletionReview(task, ctx);
+    }
+  }
+
+  private async runCompletionReview(task: Task, ctx: ExtensionContext): Promise<void> {
+    const review = task.review;
+    if (!review) return;
+    const identity: CompletionReviewIdentity = {
+      taskId: task.id,
+      generation: review.generation,
+      token: review.token,
+      completionRevision: review.completionRevision,
+    };
+    const claimed = claimCompletionReview(getState(), identity);
+    if (!this.commitReviewState(claimed)) return;
+    this.onStateChanged();
+
+    try {
+      const service = getBackgroundSubagentService();
+      if (!service) throw new Error("Background subagent service unavailable");
+      const result = await service.run({
+        title: `TODO #${task.id} completion review`,
+        cwd: ctx.cwd,
+        model: COMPLETION_REVIEW_MODEL,
+        reasoningEffort: "low",
+        maxTurns: 4,
+        timeoutMs: 120_000,
+        allowedTools: [],
+        noExtensions: true,
+        parent: {
+          parentCwd: ctx.cwd,
+          projectTrusted: ctx.isProjectTrusted(),
+          inheritedModel: ctx.model
+            ? { provider: ctx.model.provider, id: ctx.model.id }
+            : undefined,
+          inheritedThinkingLevel: "low",
+          modelRegistry: ctx.modelRegistry,
+        },
+        prompt: completionReviewPrompt(task, await boundedGitDiff(ctx.cwd)),
+      });
+      if (result.status !== "done")
+        throw new Error(result.error ?? "Review worker failed");
+      const parsed = parseCompletionReviewResponse(result.output);
+      if (!parsed)
+        throw new Error("Review worker returned malformed decision JSON");
+      const next = settleCompletionReview(getState(), identity, {
+        ...parsed,
+        reviewerId: result.id,
+        model: COMPLETION_REVIEW_MODEL,
+      });
+      if (this.commitReviewState(next)) this.stateChanged();
+    } catch (error) {
+      const next = failCompletionReview(
+        getState(),
+        identity,
+        `Independent review did not complete: ${String(error)}`,
+      );
+      if (this.commitReviewState(next)) this.onStateChanged();
+    }
+  }
+
+  private requestCompletionReport(deliverAs: "steer" | "followUp"): void {
     if (this.completionReviewPending || !hasCompletedBatch()) return;
     if (deliverAs === "followUp") {
-      if (!this.queueContinuation(COMPLETION_REVIEW, this.completionGuard))
+      if (!this.queueContinuation(COMPLETION_REPORT, this.completionGuard))
         return;
     } else {
       this.pi.sendMessage(
         {
-          customType: "rpiv-todo:completion-review",
-          content: COMPLETION_REVIEW,
+          customType: "rpiv-todo:completion-report",
+          content: COMPLETION_REPORT,
           display: false,
         },
         { triggerTurn: true, deliverAs },
@@ -805,9 +966,10 @@ export class TodoScheduler {
     this.clearStickyIfSettled();
     this.armDeadline();
     this.onStateChanged();
+    this.scheduleCompletionReviews();
     const state = getState();
     if (this.automationPaused) return;
-    if (hasCompletedBatch(state)) this.requestCompletionReview("steer");
+    if (hasCompletedBatch(state)) this.requestCompletionReport("steer");
     else this.completionReviewPending = false;
     void this.reconcileJobs(this.generation);
     if (
@@ -832,12 +994,17 @@ export class TodoScheduler {
     this.completionGuard.onAgentStart(revision);
   }
 
-  onAgentSettled(_ctx: ExtensionContext, aborted = false): void {
+  onAgentSettled(
+    _ctx: ExtensionContext,
+    aborted = false,
+    usageLimited = false,
+  ): void {
     this.agentRunning = false;
-    if (aborted) {
+    if (aborted || usageLimited) {
       this.continuationPending = false;
       this.guard.reset();
       this.completionGuard.reset();
+      if (usageLimited) this.pauseAutomation();
       return;
     }
     this.onAgentEnd();
@@ -895,7 +1062,7 @@ export class TodoScheduler {
         );
         return;
       }
-      this.requestCompletionReview("followUp");
+      this.requestCompletionReport("followUp");
       return;
     }
     this.completionGuard.reset();
@@ -948,6 +1115,7 @@ export class TodoScheduler {
     this.delegatedWorkerOwners.clear();
     this.interruptedWorkerOwners.clear();
     this.cancellationsInFlight.clear();
+    this.context = undefined;
     this.active = false;
   }
 

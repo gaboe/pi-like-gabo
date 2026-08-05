@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import type { Task, TaskAction, TaskMutationParams, TaskStatus } from "../tool/types.js";
-import { isTaskArchivable } from "./completion.js";
+import type { Task, TaskAction, TaskMutationParams, TaskReview, TaskStatus } from "../tool/types.js";
+import { COMPLETION_REVIEW_MODEL, COMPLETION_REVIEWER_ID, isTaskArchivable } from "./completion.js";
 import { isTransitionValid } from "./invariants.js";
 import type { TaskState } from "./state.js";
 import { detectCycle } from "./task-graph.js";
@@ -40,6 +40,13 @@ function normalizeQuestions(value: string[] | undefined): string[] | undefined {
 	if (!value || value.length < 1 || value.length > 8) return undefined;
 	const questions = value.map((question) => question.trim());
 	return questions.every(Boolean) && new Set(questions).size === questions.length ? questions : undefined;
+}
+
+function normalizeCompletion(params: TaskMutationParams): { result: string; evidence: string[] } | undefined {
+	if (typeof params.result !== "string" || !Array.isArray(params.evidence) || params.evidence.length < 1 || params.evidence.length > 8) return undefined;
+	const result = params.result.trim();
+	const evidence = params.evidence.map((entry) => typeof entry === "string" ? entry.trim() : "");
+	return result && evidence.every(Boolean) ? { result, evidence } : undefined;
 }
 
 function errorResult(state: TaskState, message: string): ApplyResult {
@@ -85,6 +92,89 @@ function rotateIncarnation(
 	updated.metadata = metadata;
 }
 
+export interface CompletionReviewIdentity {
+	taskId: number;
+	generation: number;
+	token: string;
+	completionRevision: number;
+}
+
+function matchingPendingReview(task: Task | undefined, identity: CompletionReviewIdentity): task is Task & { review: TaskReview } {
+	return Boolean(
+		task?.review?.status === "pending" &&
+		task.id === identity.taskId &&
+		task.review.generation === identity.generation &&
+		task.review.token === identity.token &&
+		task.review.completionRevision === identity.completionRevision,
+	);
+}
+
+function replaceTask(state: TaskState, task: Task): TaskState {
+	return {
+		...state,
+		tasks: state.tasks.map((candidate) => candidate.id === task.id ? task : candidate),
+		revision: nextRevision(state),
+	};
+}
+
+/** Atomically claim one persisted pending review before starting its worker. */
+export function claimCompletionReview(
+	state: TaskState,
+	identity: CompletionReviewIdentity,
+	dispatchedAt = Date.now(),
+): TaskState {
+	const task = state.tasks.find((candidate) => candidate.id === identity.taskId);
+	if (!matchingPendingReview(task, identity) || task.review.dispatchedAt !== undefined) return state;
+	return replaceTask(state, {
+		...task,
+		review: { ...task.review, dispatchedAt },
+	});
+}
+
+export function settleCompletionReview(
+	state: TaskState,
+	identity: CompletionReviewIdentity,
+	result: {
+		decision: "approved" | "rejected";
+		feedback: string;
+		reviewerId: string;
+		model: string;
+		reviewedAt?: number;
+	},
+): TaskState {
+	const task = state.tasks.find((candidate) => candidate.id === identity.taskId);
+	if (!matchingPendingReview(task, identity)) return state;
+	return replaceTask(state, {
+		...task,
+		status: result.decision === "rejected" ? "in_progress" : task.status,
+		review: {
+			...task.review,
+			status: result.decision,
+			reviewedAt: result.reviewedAt ?? Date.now(),
+			reviewer: { id: result.reviewerId, model: result.model },
+			feedback: result.feedback.trim().slice(0, 4_000),
+		},
+	});
+}
+
+export function failCompletionReview(
+	state: TaskState,
+	identity: CompletionReviewIdentity,
+	feedback: string,
+	failedAt = Date.now(),
+): TaskState {
+	const task = state.tasks.find((candidate) => candidate.id === identity.taskId);
+	if (!matchingPendingReview(task, identity)) return state;
+	return replaceTask(state, {
+		...task,
+		review: {
+			...task.review,
+			failedAt,
+			feedback: feedback.trim().slice(0, 4_000),
+		},
+	});
+}
+
 /**
  * Pure reducer: (state, action, params) → (state, op). Mirrors the
  * `applyTaskMutation` of pre-refactor `todo.ts` minus content/details
@@ -105,6 +195,9 @@ export function applyTaskMutation(
 ): ApplyResult {
 	switch (action) {
 		case "create": {
+			if (params.result !== undefined || params.evidence !== undefined) {
+				return errorResult(state, "result and evidence require status completed");
+			}
 			if (!params.subject?.trim()) {
 				return errorResult(state, "subject required for create");
 			}
@@ -144,6 +237,8 @@ export function applyTaskMutation(
 				params.description !== undefined ||
 				params.activeForm !== undefined ||
 				params.status !== undefined ||
+				params.result !== undefined ||
+				params.evidence !== undefined ||
 				params.owner !== undefined ||
 				params.metadata !== undefined ||
 				params.questions !== undefined ||
@@ -163,6 +258,16 @@ export function applyTaskMutation(
 					return errorResult(state, "cannot complete while a jobs wait remains active");
 				}
 				newStatus = params.status;
+			}
+
+			const completing = current.status !== "completed" && newStatus === "completed";
+			if (newStatus !== "completed" && (params.result !== undefined || params.evidence !== undefined)) {
+				return errorResult(state, "result and evidence require status completed");
+			}
+			const completion = completing ? normalizeCompletion(params) : undefined;
+			if (completing && !completion) {
+				if (typeof params.result !== "string" || !params.result.trim()) return errorResult(state, "completed requires a non-empty result");
+				return errorResult(state, "completed requires at least one non-empty evidence entry");
 			}
 
 			let wait = current.wait;
@@ -252,6 +357,22 @@ export function applyTaskMutation(
 			else updated.metadata = newMetadata;
 			if (wait) updated.wait = wait;
 			else delete updated.wait;
+			if (completion) {
+				const completionRevision = nextRevision(state);
+				updated.result = completion.result;
+				updated.evidence = completion.evidence;
+				updated.review = {
+					status: "pending",
+					generation: (current.review?.generation ?? 0) + 1,
+					token: createToken(),
+					completionRevision,
+					requestedAt: now,
+					reviewer: { id: COMPLETION_REVIEWER_ID, model: COMPLETION_REVIEW_MODEL },
+				};
+			} else if (newStatus !== "completed" && current.review?.status !== "rejected") {
+				delete updated.result;
+				delete updated.evidence;
+			}
 			if (newStatus === "waiting:user" || newStatus === "waiting:jobs") delete updated.waitEvidence;
 			if (scopeChanged(current, updated, params)) rotateIncarnation(state, current, updated, createToken);
 
@@ -293,6 +414,12 @@ export function applyTaskMutation(
 			if (idx === -1) return errorResult(state, `#${params.id} not found`);
 			const current = state.tasks[idx];
 			if (current.status === "deleted") return errorResult(state, `#${current.id} is already deleted`);
+			if (!isTaskArchivable(current)) {
+				return errorResult(
+					state,
+					`cannot delete unresolved #${current.id}; complete it with result, evidence, and approved review first`,
+				);
+			}
 			const updated: Task = { ...current, status: "deleted" };
 			delete updated.wait;
 			const newTasks = [...state.tasks];

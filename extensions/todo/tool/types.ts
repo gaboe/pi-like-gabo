@@ -53,12 +53,31 @@ export type TaskWait =
 
 export type TaskAction = "create" | "update" | "list" | "get" | "delete" | "clear";
 
+export type TaskReviewStatus = "pending" | "approved" | "rejected";
+
+export interface TaskReview {
+	status: TaskReviewStatus;
+	generation: number;
+	token: string;
+	completionRevision: number;
+	requestedAt: number;
+	dispatchedAt?: number;
+	reviewedAt?: number;
+	failedAt?: number;
+	reviewer: { id: string; model: string };
+	feedback?: string;
+}
+
 export interface Task {
 	id: number;
 	subject: string;
 	description?: string;
 	activeForm?: string;
 	status: TaskStatus;
+	/** Required audit record when status is completed. */
+	result?: string;
+	evidence?: string[];
+	review?: TaskReview;
 	blockedBy?: number[];
 	owner?: string;
 	metadata?: Record<string, unknown>;
@@ -88,6 +107,8 @@ export interface TaskMutationParams {
 	description?: string;
 	activeForm?: string;
 	status?: TaskStatus;
+	result?: string;
+	evidence?: string[];
 	blockedBy?: number[];
 	addBlockedBy?: number[];
 	removeBlockedBy?: number[];
@@ -119,6 +140,20 @@ export const TodoParamsSchema = Type.Object({
 	status: Type.Optional(
 		StringEnum(["pending", "in_progress", "waiting:user", "waiting:jobs", "completed", "deleted"] as const, {
 			description: "Target status (update) or list filter (list)",
+		}),
+	),
+	result: Type.Optional(
+		Type.String({
+			minLength: 1,
+			maxLength: 4_000,
+			description: "Concrete outcome required when completing a task; trimmed and stored for audit",
+		}),
+	),
+	evidence: Type.Optional(
+		Type.Array(Type.String({ minLength: 1, maxLength: 1_000 }), {
+			minItems: 1,
+			maxItems: 8,
+			description: "One to eight concrete verification entries required when completing a task; trimmed and stored for audit",
 		}),
 	),
 	questions: Type.Optional(

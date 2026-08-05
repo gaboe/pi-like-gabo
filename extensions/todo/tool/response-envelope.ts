@@ -59,6 +59,16 @@ function formatGetLines(task: Task, state: TaskState): string {
     lines.push(`  blocks: ${blocks.map((id) => `#${id}`).join(", ")}`);
   }
   if (task.owner) lines.push(`  owner: ${task.owner}`);
+  if (task.result) lines.push(`  result: ${task.result}`);
+  for (const evidence of task.evidence ?? []) lines.push(`  completionEvidence: ${evidence}`);
+  if (task.review) {
+    lines.push(`  review: ${task.review.status}`);
+    lines.push(`  reviewer: ${task.review.reviewer.id} (${task.review.reviewer.model})`);
+    if (task.review.feedback) lines.push(`  reviewFeedback: ${task.review.feedback}`);
+    if (task.review.failedAt !== undefined) {
+      lines.push(`  reviewFailure: ${new Date(task.review.failedAt).toISOString()}`);
+    }
+  }
   const orchestrator = task.metadata?.orchestrator as
     Record<string, unknown> | undefined;
   if (orchestrator?.mode && orchestrator.mode !== "direct")

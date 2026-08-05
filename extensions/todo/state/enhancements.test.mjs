@@ -2,9 +2,7 @@ import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 import {
   applyPreparationCAS,
-  boundedSessionContext,
   explicitResearchEnrichment,
-  parseTodoAnalysis,
   provisionalTodoSubject,
   requestTodoAnalysis,
   requestTodoReorder,
@@ -24,6 +22,7 @@ import {
   actionableContinuation,
   AutoContinuationGuard,
   hasCompletedBatch,
+  isChatGptProUsageLimit,
   persistTodoSnapshot,
   TodoScheduler,
 } from "../scheduler.ts";
@@ -41,7 +40,12 @@ import {
   TODO_PATCH_VERSION,
   TODO_SNAPSHOT_TYPE,
 } from "./replay.ts";
-import { applyTaskMutation } from "./state-reducer.ts";
+import {
+  applyTaskMutation,
+  claimCompletionReview,
+  failCompletionReview,
+  settleCompletionReview,
+} from "./state-reducer.ts";
 import { __resetState, commitState, getState } from "./store.ts";
 import {
   applyJobState,
@@ -60,6 +64,31 @@ const task = (id, status = "pending", extra = {}) => ({
   status,
   ...extra,
 });
+const completeAndApprove = (state, id) => {
+  const completed = applyTaskMutation(state, "update", {
+    id,
+    status: "completed",
+    result: "done",
+    evidence: ["verified"],
+  }).state;
+  const review = completed.tasks.find((candidate) => candidate.id === id).review;
+  const identity = {
+    taskId: id,
+    generation: review.generation,
+    token: review.token,
+    completionRevision: review.completionRevision,
+  };
+  return settleCompletionReview(
+    claimCompletionReview(completed, identity),
+    identity,
+    {
+      decision: "approved",
+      feedback: "verified",
+      reviewerId: "reviewer",
+      model: "openai-codex/gpt-5.6-luna",
+    },
+  );
+};
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 const deferred = () => {
   let resolve;
@@ -93,6 +122,160 @@ class Bus {
     for (const handler of this.handlers.get(channel) ?? []) handler(value);
   }
 }
+
+describe("todo completion evidence", () => {
+  it("requires proof, persists a pending review, and clears only after approval", () => {
+    const state = { tasks: [task(1)], nextId: 2, revision: 1 };
+    const missingResult = applyTaskMutation(state, "update", {
+      id: 1,
+      status: "completed",
+      evidence: ["  test passed  "],
+    });
+    assert.equal(missingResult.op.kind, "error");
+    assert.match(missingResult.op.message, /non-empty result/);
+    assert.deepEqual(missingResult.state, state);
+
+    const missingEvidence = applyTaskMutation(state, "update", {
+      id: 1,
+      status: "completed",
+      result: "  implemented  ",
+      evidence: ["  "],
+    });
+    assert.equal(missingEvidence.op.kind, "error");
+    assert.match(missingEvidence.op.message, /non-empty evidence/);
+    assert.deepEqual(missingEvidence.state, state);
+
+    const completed = applyTaskMutation(state, "update", {
+      id: 1,
+      status: "completed",
+      result: "  implemented  ",
+      evidence: ["  test passed  "],
+    });
+    assert.equal(completed.op.kind, "update");
+    assert.equal(completed.state.tasks[0].result, "implemented");
+    assert.deepEqual(completed.state.tasks[0].evidence, ["test passed"]);
+    assert.equal(completed.state.tasks[0].review.status, "pending");
+    assert.equal(applyTaskMutation(completed.state, "clear", {}).op.kind, "error");
+
+    const identity = {
+      taskId: 1,
+      generation: completed.state.tasks[0].review.generation,
+      token: completed.state.tasks[0].review.token,
+      completionRevision: completed.state.tasks[0].review.completionRevision,
+    };
+    const claimed = claimCompletionReview(completed.state, identity, 2_000);
+    const approved = settleCompletionReview(
+      claimed,
+      identity,
+      {
+        decision: "approved",
+        feedback: "Evidence matches the implementation.",
+        reviewerId: "todo-completion-reviewer",
+        model: "openai-codex/gpt-5.6-luna",
+        reviewedAt: 3_000,
+      },
+    );
+    assert.equal(approved.tasks[0].review.status, "approved");
+    assert.equal(applyTaskMutation(approved, "clear", {}).op.kind, "clear");
+    assert.match(
+      formatContent({ kind: "get", task: approved.tasks[0] }, approved),
+      /result: implemented\n  completionEvidence: test passed\n  review: approved/,
+    );
+  });
+
+  it("ignores stale callbacks, reopens rejection, and leaves worker failures gated", () => {
+    const completed = applyTaskMutation(
+      { tasks: [task(1)], nextId: 2, revision: 1 },
+      "update",
+      { id: 1, status: "completed", result: "done", evidence: ["test"] },
+    ).state;
+    const review = completed.tasks[0].review;
+    const identity = {
+      taskId: 1,
+      generation: review.generation,
+      token: review.token,
+      completionRevision: review.completionRevision,
+    };
+    const claimed = claimCompletionReview(completed, identity, 2_000);
+    assert.equal(claimCompletionReview(claimed, identity, 2_100), claimed);
+    assert.equal(
+      settleCompletionReview(
+        claimed,
+        { ...identity, token: "stale" },
+        { decision: "approved", feedback: "stale" },
+        3_000,
+      ),
+      claimed,
+    );
+
+    const rejected = settleCompletionReview(
+      claimed,
+      identity,
+      {
+        decision: "rejected",
+        feedback: "Missing the requested Mermaid diagram.",
+        reviewerId: "todo-completion-reviewer",
+        model: "openai-codex/gpt-5.6-luna",
+        reviewedAt: 3_000,
+      },
+    );
+    assert.equal(rejected.tasks[0].status, "in_progress");
+    assert.equal(rejected.tasks[0].review.status, "rejected");
+    assert.equal(rejected.tasks[0].result, "done");
+    assert.match(rejected.tasks[0].review.feedback, /Mermaid/);
+    assert.equal(applyTaskMutation(rejected, "clear", {}).op.kind, "error");
+
+    const failed = failCompletionReview(claimed, identity, "review timed out", 4_000);
+    assert.equal(failed.tasks[0].status, "completed");
+    assert.equal(failed.tasks[0].review.status, "pending");
+    assert.equal(failed.tasks[0].review.feedback, "review timed out");
+    assert.equal(applyTaskMutation(failed, "clear", {}).op.kind, "error");
+
+    const legacy = {
+      tasks: [task(1, "completed", { result: "legacy", evidence: ["snapshot"] })],
+      nextId: 2,
+      revision: 1,
+    };
+    assert.equal(applyTaskMutation(legacy, "clear", {}).op.kind, "error");
+  });
+
+  it("blocks deletion until completion review approves the task", () => {
+    for (const status of ["pending", "in_progress", "waiting:user", "waiting:jobs"]) {
+      const state = { tasks: [task(1, status)], nextId: 2, revision: 1 };
+      const result = applyTaskMutation(state, "delete", { id: 1 });
+      assert.equal(result.op.kind, "error");
+      assert.match(result.op.message, /cannot delete unresolved #1/);
+      assert.equal(result.state, state);
+    }
+
+    const completed = applyTaskMutation(
+      { tasks: [task(1)], nextId: 2, revision: 1 },
+      "update",
+      { id: 1, status: "completed", result: "done", evidence: ["verified"] },
+    ).state;
+    assert.equal(applyTaskMutation(completed, "delete", { id: 1 }).op.kind, "error");
+
+    const review = completed.tasks[0].review;
+    const identity = {
+      taskId: 1,
+      generation: review.generation,
+      token: review.token,
+      completionRevision: review.completionRevision,
+    };
+    const approved = settleCompletionReview(
+      claimCompletionReview(completed, identity, 2_000),
+      identity,
+      {
+        decision: "approved",
+        feedback: "verified",
+        reviewerId: "reviewer",
+        model: "openai-codex/gpt-5.6-luna",
+        reviewedAt: 3_000,
+      },
+    );
+    assert.equal(applyTaskMutation(approved, "delete", { id: 1 }).op.kind, "delete");
+  });
+});
 
 describe("todo waiting transitions", () => {
   it("stores exact waiting:user questions and summarizes every waiting task", () => {
@@ -1007,11 +1190,11 @@ Recommendation: implement external DTO guards.`;
         revision: 1,
       };
       const expected = state.tasks[0];
-      const terminal = applyTaskMutation(
-        state,
-        status === "deleted" ? "delete" : "update",
-        status === "deleted" ? { id: 1 } : { id: 1, status },
-      ).state;
+      const completed = completeAndApprove(state, 1);
+      const terminal =
+        status === "deleted"
+          ? applyTaskMutation(completed, "delete", { id: 1 }).state
+          : completed;
       const result = applyPreparationCAS(terminal, expected, dossier());
       assert.equal(result.tasks[0].status, status);
       assert.equal(result.tasks[0].metadata.preparation.summary, undefined);
@@ -1086,12 +1269,11 @@ Recommendation: implement external DTO guards.`;
       );
       await command.handler("add reorder race", { ui: { notify() {} } });
       await flush();
+      const completed = completeAndApprove(getState(), 2);
       commitState(
-        applyTaskMutation(
-          getState(),
-          action === "deleted" ? "delete" : "update",
-          action === "deleted" ? { id: 2 } : { id: 2, status: action },
-        ).state,
+        action === "deleted"
+          ? applyTaskMutation(completed, "delete", { id: 2 }).state
+          : completed,
       );
       release([4, 2, 1]);
       await flush();
@@ -1415,11 +1597,11 @@ Recommendation: implement external DTO guards.`;
     assert.equal(sent.length, 1);
     assert.equal(sent[0].options.triggerTurn, true);
     commitState(
-      applyTaskMutation(getState(), "update", { id: 1, status: "completed" })
+      applyTaskMutation(getState(), "update", { id: 1, status: "completed", result: "done", evidence: ["verified"] })
         .state,
     );
     commitState(
-      applyTaskMutation(getState(), "update", { id: 5, status: "completed" })
+      applyTaskMutation(getState(), "update", { id: 5, status: "completed", result: "done", evidence: ["verified"] })
         .state,
     );
     scheduler.onAgentStart();
@@ -1435,12 +1617,28 @@ Recommendation: implement external DTO guards.`;
     adapter.dispose();
   });
 
-  it("steers the agent to review and clear a fully completed batch", () => {
+  it("dispatches one independent review before steering the agent to clear", async () => {
     __resetState();
     commitState({ tasks: [task(1, "in_progress")], nextId: 2, revision: 1 });
     const bus = new Bus();
     const adapter = new JobsAdapter(bus);
     const sent = [];
+    const requests = [];
+    const started = deferred();
+    const unregister = registerBackgroundSubagentService({
+      async run(request) {
+        requests.push(request);
+        started.resolve();
+        return {
+          id: "review-1",
+          status: "done",
+          output: JSON.stringify({
+            decision: "approved",
+            feedback: "Result and evidence match the diff.",
+          }),
+        };
+      },
+    });
     const scheduler = new TodoScheduler(
       {
         appendEntry() {},
@@ -1451,34 +1649,54 @@ Recommendation: implement external DTO guards.`;
       adapter,
       () => {},
     );
-    scheduler.activate({});
-    scheduler.onAgentStart();
-    commitState(
-      applyTaskMutation(getState(), "update", { id: 1, status: "completed" })
-        .state,
-    );
-    scheduler.stateChanged();
-    assert.equal(hasCompletedBatch(), true);
-    assert.equal(getState().tasks.length, 1);
-    assert.equal(sent.length, 1);
-    assert.equal(sent[0].options.deliverAs, "steer");
-    assert.equal(sent[0].options.triggerTurn, true);
-    assert.match(sent[0].message.content, /call todo clear/);
-    assert.match(sent[0].message.content, /Before → now/);
-    assert.match(sent[0].message.content, /Key code changes/);
-    assert.match(sent[0].message.content, /Verification/);
-    assert.match(sent[0].message.content, /Remaining caveats/);
+    try {
+      scheduler.activate({
+        cwd: process.cwd(),
+        isProjectTrusted: () => true,
+        modelRegistry: {},
+      });
+      scheduler.onAgentStart();
+      commitState(
+        applyTaskMutation(getState(), "update", {
+          id: 1,
+          status: "completed",
+          result: "done",
+          evidence: ["verified"],
+        }).state,
+      );
+      scheduler.stateChanged();
+      scheduler.stateChanged();
+      assert.equal(hasCompletedBatch(), false);
+      assert.equal(applyTaskMutation(getState(), "clear", {}).op.kind, "error");
+      await started.promise;
+      await flush();
 
-    commitState(applyTaskMutation(getState(), "clear", {}).state);
-    scheduler.stateChanged();
-    scheduler.onAgentEnd({});
-    assert.equal(getState().tasks.length, 1);
-    assert.equal(getState().tasks[0].status, "deleted");
-    assert.equal(getState().nextId, 2);
-    assert.equal(hasCompletedBatch(), false);
-    assert.equal(sent.length, 1);
-    scheduler.dispose();
-    adapter.dispose();
+      assert.equal(requests.length, 1);
+      assert.equal(requests[0].model, "openai-codex/gpt-5.6-luna");
+      assert.deepEqual(requests[0].allowedTools, []);
+      assert.match(requests[0].prompt, /Task 1/);
+      assert.match(requests[0].prompt, /done/);
+      assert.match(requests[0].prompt, /verified/);
+      assert.match(requests[0].prompt, /Mermaid diagram or GitHub links/);
+      assert.match(requests[0].prompt, /current git diff/i);
+      assert.equal(getState().tasks[0].review.status, "approved");
+      assert.equal(hasCompletedBatch(), true);
+      assert.equal(sent.length, 1);
+      assert.equal(sent[0].options.deliverAs, "steer");
+      assert.equal(sent[0].options.triggerTurn, true);
+      assert.match(sent[0].message.content, /Call todo clear/);
+
+      commitState(applyTaskMutation(getState(), "clear", {}).state);
+      scheduler.stateChanged();
+      scheduler.onAgentEnd({});
+      assert.equal(getState().tasks[0].status, "deleted");
+      assert.equal(hasCompletedBatch(), false);
+      assert.equal(sent.length, 1);
+    } finally {
+      scheduler.dispose();
+      adapter.dispose();
+      unregister();
+    }
   });
 
   it("keeps targeting pending work instead of polling unrelated waiting jobs", () => {
@@ -1717,6 +1935,68 @@ Recommendation: implement external DTO guards.`;
     adapter.dispose();
   });
 
+  it("recognizes only the ChatGPT Pro usage-limit error", () => {
+    assert.equal(
+      isChatGptProUsageLimit(
+        "You have hit your ChatGPT usage limit (pro plan). Try again in ~4232 min.",
+      ),
+      true,
+    );
+    assert.equal(isChatGptProUsageLimit("Temporary upstream failure"), false);
+    assert.equal(isChatGptProUsageLimit(undefined), false);
+  });
+
+  it("pauses auto-continuation after the ChatGPT Pro usage limit until user input", () => {
+    __resetState();
+    commitState({ tasks: [task(1, "in_progress")], nextId: 2, revision: 1 });
+    const adapter = new JobsAdapter(new Bus());
+    const sent = [];
+    const scheduler = new TodoScheduler(
+      {
+        appendEntry() {},
+        sendMessage(message, options) {
+          sent.push({ message, options });
+        },
+      },
+      adapter,
+      () => {},
+    );
+    scheduler.activate({});
+    scheduler.onAgentSettled({}, false, true);
+    scheduler.onAgentStart();
+    scheduler.onAgentSettled({});
+    assert.equal(sent.length, 0);
+
+    scheduler.resumeAutomation();
+    scheduler.onAgentStart();
+    scheduler.onAgentSettled({});
+    assert.equal(sent.length, 1);
+    scheduler.dispose();
+    adapter.dispose();
+  });
+
+  it("keeps auto-continuation for other API errors", () => {
+    __resetState();
+    commitState({ tasks: [task(1, "in_progress")], nextId: 2, revision: 1 });
+    const adapter = new JobsAdapter(new Bus());
+    const sent = [];
+    const scheduler = new TodoScheduler(
+      {
+        appendEntry() {},
+        sendMessage(message, options) {
+          sent.push({ message, options });
+        },
+      },
+      adapter,
+      () => {},
+    );
+    scheduler.activate({});
+    scheduler.onAgentSettled({}, false, false);
+    assert.equal(sent.length, 1);
+    scheduler.dispose();
+    adapter.dispose();
+  });
+
   it("retries raw classification once, then records prepared classification", async () => {
     __resetState();
     let command,
@@ -1864,7 +2144,7 @@ Recommendation: implement external DTO guards.`;
     await flush();
     assert.equal(getState().orchestrator.sticky, true);
     commitState(
-      applyTaskMutation(getState(), "update", { id: 1, status: "completed" })
+      applyTaskMutation(getState(), "update", { id: 1, status: "completed", result: "done", evidence: ["verified"] })
         .state,
     );
     scheduler.stateChanged();

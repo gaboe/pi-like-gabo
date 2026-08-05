@@ -259,16 +259,19 @@ it("rotates only effective dependency changes and rejects stale preparation call
   }
 });
 
-for (const terminal of ["completed", "deleted"]) {
+for (const terminal of ["completed"]) {
   it(`cancels preparation and classifier separately on ${terminal} and rejects stale callbacks`, async () => {
     const h = setup();
     try {
       await h.tool.execute("call", { action: "create", subject: `${terminal} race` }, undefined, undefined, h.ctx);
       await flush();
-      const params = terminal === "deleted"
-        ? { action: "delete", id: 1 }
-        : { action: "update", id: 1, status: "completed" };
-      await h.tool.execute("call", params, undefined, undefined, h.ctx);
+      await h.tool.execute(
+        "call",
+        { action: "update", id: 1, status: "completed", result: "done", evidence: ["verified"] },
+        undefined,
+        undefined,
+        h.ctx,
+      );
       await flush();
       assert.deepEqual(new Set(h.cancelled[0]), new Set(["classifier-1", "analyst-1"]));
 
@@ -290,3 +293,20 @@ for (const terminal of ["completed", "deleted"]) {
     }
   });
 }
+
+it("rejects deletion while preparation is running without cancelling its workers", async () => {
+  const h = setup();
+  try {
+    await h.tool.execute("call", { action: "create", subject: "delete race" }, undefined, undefined, h.ctx);
+    await flush();
+    const response = await h.tool.execute("call", { action: "delete", id: 1 }, undefined, undefined, h.ctx);
+    await flush();
+
+    assert.match(JSON.stringify(response), /cannot delete unresolved #1/);
+    assert.equal(getState().tasks[0].status, "pending");
+    assert.equal(getState().tasks[0].metadata.preparation.status, "running");
+    assert.equal(h.cancelled.length, 0);
+  } finally {
+    h.unregister();
+  }
+});

@@ -83,8 +83,8 @@ it("preserves manual off and sticky state through every canonical mutation, pers
     preserved();
     state = applyJobState(state, { id: "job-1", status: "wake", settledAt: 5_000 }, 5_000);
     preserved();
-    state = applyTaskMutation(state, "update", { id: 1, status: "completed" }).state;
-    state = applyTaskMutation(state, "update", { id: 2, status: "completed" }).state;
+    state = applyTaskMutation(state, "update", { id: 1, status: "completed", result: "done", evidence: ["verified"] }).state;
+    state = applyTaskMutation(state, "update", { id: 2, status: "completed", result: "done", evidence: ["verified"] }).state;
     state = applyTaskMutation(state, "clear", {}).state;
     preserved();
 

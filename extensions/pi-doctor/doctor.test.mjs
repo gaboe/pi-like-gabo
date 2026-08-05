@@ -163,9 +163,21 @@ test("pi-lens fixtures distinguish absent, configured, present, malformed, and u
   assert.equal(exactSettings.detection, "configured");
 });
 
-test("root package keeps pi-lens external to dependencies and pi.extensions", () => {
-  const manifest = JSON.parse(readFileSync(path.resolve(import.meta.dirname, "../../package.json"), "utf8"));
-  assert.equal(Object.hasOwn(manifest.dependencies ?? {}, "pi-lens"), false);
-  assert.equal(Object.hasOwn(manifest.devDependencies ?? {}, "pi-lens"), false);
-  assert.equal((manifest.pi?.extensions ?? []).some((entry) => entry.toLowerCase().includes("pi-lens")), false);
+test("root package pins, bundles, and activates pi-lens", () => {
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(path.resolve(import.meta.dirname, "../../package.json"), "utf8"));
+  } catch (error) {
+    assert.fail(`root package.json must be valid JSON: ${error}`);
+  }
+  assert.match(
+    manifest.dependencies?.["pi-lens"],
+    /^git\+https:\/\/github\.com\/gaboe\/pi-lens\.git#[0-9a-f]{40}$/,
+  );
+  assert.equal(
+    (manifest.pi?.extensions ?? []).includes("./node_modules/pi-lens/dist/index.js"),
+    true,
+  );
+  assert.equal((manifest.bundledDependencies ?? []).includes("pi-lens"), true);
+  assert.equal((manifest.bundleDependencies ?? []).includes("pi-lens"), true);
 });
