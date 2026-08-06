@@ -44,6 +44,7 @@ import {
   COMPLETION_REVIEW_MODEL,
   isCompletionReviewDispatchable,
   isTaskArchivable,
+  nextCompletionReviewRetryAt,
 } from "./state/completion.js";
 
 const FULL_SNAPSHOT_INTERVAL = 100;
@@ -230,6 +231,7 @@ export class TodoScheduler {
   private context: ExtensionContext | undefined;
   private generation = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private reviewRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private continuationPending = false;
   private agentRunning = false;
   private completionReviewPending = false;
@@ -751,8 +753,17 @@ export class TodoScheduler {
 
   pauseAutomation(): void {
     this.automationPaused = true;
-    this.interruptOwners(false, false);
+    // interruptOwners only persists "interrupted" metadata and hands back the
+    // ids — without the cancel, paused automation still burns worker capacity.
+    // disableOrchestrator() already does this; it awaits, but pause is sync and
+    // called from settle handlers, so fire-and-forget.
+    const interrupted = this.interruptOwners(false, false);
+    if (interrupted.length) {
+      void getBackgroundSubagentService()?.cancel?.(interrupted);
+    }
     this.continuationPending = false;
+    if (this.reviewRetryTimer) clearTimeout(this.reviewRetryTimer);
+    this.reviewRetryTimer = undefined;
     this.guard.reset();
     this.completionGuard.reset();
     this.completionReviewPending = false;
@@ -890,6 +901,30 @@ export class TodoScheduler {
       if (!isCompletionReviewDispatchable(task, Date.now())) continue;
       void this.runCompletionReview(task, ctx);
     }
+    this.armCompletionReviewRetry();
+  }
+
+  /**
+   * Re-armed on every sweep, not only after a failure, so a review left retryable
+   * by a previous session is picked up after replay too. Without this, a backoff
+   * that expires while the TODO list is idle waits for unrelated activity.
+   */
+  private armCompletionReviewRetry(): void {
+    if (this.reviewRetryTimer) clearTimeout(this.reviewRetryTimer);
+    this.reviewRetryTimer = undefined;
+    if (!this.active || this.automationPaused) return;
+    const retryAt = nextCompletionReviewRetryAt(getState().tasks);
+    if (retryAt === undefined) return;
+    const generation = this.generation;
+    this.reviewRetryTimer = setTimeout(
+      () => {
+        this.reviewRetryTimer = undefined;
+        if (generation !== this.generation) return;
+        this.scheduleCompletionReviews();
+      },
+      Math.max(0, retryAt - Date.now()),
+    );
+    this.reviewRetryTimer.unref?.();
   }
 
   private async runCompletionReview(task: Task, ctx: ExtensionContext): Promise<void> {
@@ -1114,6 +1149,8 @@ export class TodoScheduler {
   dispose(): void {
     this.generation++;
     this.clearTimer();
+    if (this.reviewRetryTimer) clearTimeout(this.reviewRetryTimer);
+    this.reviewRetryTimer = undefined;
     this.stopJobs();
     this.stopSubagentWaits();
     this.stopSubagentDelegations();

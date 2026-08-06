@@ -25,6 +25,23 @@ export function isCompletionReviewDispatchable(task: Task, now = Date.now()): bo
   return now - review.failedAt >= completionReviewRetryDelayMs(review.attempts ?? 1);
 }
 
+/**
+ * Earliest wall-clock time a failed review becomes dispatchable, or undefined if
+ * none is waiting. The scheduler only sweeps on state changes, so without a timer
+ * armed at this instant an idle TODO list never retries at all.
+ */
+export function nextCompletionReviewRetryAt(tasks: readonly Task[]): number | undefined {
+  let earliest: number | undefined;
+  for (const task of tasks) {
+    const review = task.review;
+    if (review?.status !== "pending" || review.dispatchedAt !== undefined) continue;
+    if (review.failedAt === undefined) continue;
+    const at = review.failedAt + completionReviewRetryDelayMs(review.attempts ?? 1);
+    if (earliest === undefined || at < earliest) earliest = at;
+  }
+  return earliest;
+}
+
 export function isTaskArchivable(task: Task): boolean {
   if (task.status !== "completed" || task.wait?.kind === "jobs") return false;
   // A completed task with NO review predates the review requirement and arrives

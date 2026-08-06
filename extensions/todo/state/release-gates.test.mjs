@@ -470,6 +470,60 @@ describe("release orchestration gates", () => {
     }
   });
 
+  it("cancels interrupted package workers when automation pauses", async () => {
+    __resetState();
+    commitState({
+      tasks: [
+        task("in_progress", {
+          metadata: {
+            preparation: { status: "ready", token: "prep-secret" },
+            orchestrator: { mode: "sticky" },
+          },
+        }),
+      ],
+      nextId: 2,
+      revision: 1,
+      orchestrator: { setting: "auto", sticky: true },
+    });
+    const bus = new Bus();
+    const adapter = new JobsAdapter(bus);
+    const cancelled = [];
+    const unregister = registerBackgroundSubagentService({
+      async run() {
+        return { id: "unused", status: "done", output: "{}" };
+      },
+      async cancel(ids) {
+        cancelled.push(...ids);
+      },
+    });
+    const scheduler = new TodoScheduler(
+      { events: bus, appendEntry() {}, sendMessage() {} },
+      adapter,
+      () => {},
+    );
+    try {
+      scheduler.activate({});
+      bus.emit(SUBAGENT_DELEGATION_STATE_CHANNEL, {
+        delegations: [{ id: "worker-1", todo_id: 1, todo_token: "prep-secret" }],
+      });
+
+      scheduler.pauseAutomation();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // Marking the owner interrupted is not enough — the worker keeps burning
+      // capacity unless the service is told to cancel it.
+      assert.deepEqual(cancelled, ["worker-1"]);
+      assert.equal(
+        getState().tasks[0].metadata.delegation.status,
+        "interrupted",
+      );
+    } finally {
+      unregister();
+      scheduler.dispose();
+      adapter.dispose();
+    }
+  });
+
   it("persists ownership before manager start despite throwing state observers", async () => {
     __resetState();
     commitState({

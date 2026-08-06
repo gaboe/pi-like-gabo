@@ -44,6 +44,7 @@ import {
   completionReviewRetryDelayMs,
   isCompletionReviewDispatchable,
   MAX_COMPLETION_REVIEW_ATTEMPTS,
+  nextCompletionReviewRetryAt,
 } from "./completion.ts";
 import {
   applyTaskMutation,
@@ -256,6 +257,43 @@ describe("todo completion evidence", () => {
       revision: 1,
     };
     assert.equal(applyTaskMutation(legacy, "clear", {}).op.kind, "clear");
+  });
+
+  it("reports the earliest retry instant so an idle list still retries", () => {
+    const completed = applyTaskMutation(
+      { tasks: [task(1), task(2)], nextId: 3, revision: 1 },
+      "update",
+      { id: 1, status: "completed", result: "done", evidence: ["test"] },
+    ).state;
+    const second = applyTaskMutation(completed, "update", {
+      id: 2,
+      status: "completed",
+      result: "done",
+      evidence: ["test"],
+    }).state;
+    assert.equal(nextCompletionReviewRetryAt(second.tasks), undefined);
+
+    let state = second;
+    for (const [id, failedAt] of [[1, 10_000], [2, 5_000]]) {
+      const review = state.tasks.find((candidate) => candidate.id === id).review;
+      const identity = {
+        taskId: id,
+        generation: review.generation,
+        token: review.token,
+        completionRevision: review.completionRevision,
+      };
+      state = failCompletionReview(
+        claimCompletionReview(state, identity, failedAt - 1),
+        identity,
+        "worker died",
+        failedAt,
+      );
+    }
+    // Task 2 failed earlier, so its backoff expires first.
+    assert.equal(
+      nextCompletionReviewRetryAt(state.tasks),
+      5_000 + completionReviewRetryDelayMs(1),
+    );
   });
 
   it("gives up after the attempt budget and hands the task back", () => {
