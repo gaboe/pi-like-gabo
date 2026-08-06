@@ -42,11 +42,13 @@ import {
 } from "./orchestrator.js";
 import {
   COMPLETION_REVIEW_MODEL,
+  isCompletionReviewDispatchable,
   isTaskArchivable,
 } from "./state/completion.js";
 
 const FULL_SNAPSHOT_INTERVAL = 100;
 const REVIEW_DIFF_LIMIT = 24_000;
+const REVIEW_DIFF_TIMEOUT_MS = 15_000;
 const CHATGPT_PRO_USAGE_LIMIT =
   "You have hit your ChatGPT usage limit (pro plan).";
 
@@ -83,8 +85,10 @@ async function boundedGitDiff(cwd: string): Promise<string> {
   try {
     const { stdout } = await execFileAsync(
       "git",
-      ["diff", "--no-ext-diff", "--unified=3", "--"],
-      { cwd, maxBuffer: REVIEW_DIFF_LIMIT * 4 },
+      ["diff", "--no-ext-diff", "--no-textconv", "--unified=3", "--"],
+      // maxBuffer bounds output size, not time — and this runs BEFORE service.run,
+      // so the worker's own timeoutMs cannot cover a hung Git process.
+      { cwd, maxBuffer: REVIEW_DIFF_LIMIT * 4, timeout: REVIEW_DIFF_TIMEOUT_MS },
     );
     const diff = String(stdout);
     if (!diff) return "(current git diff is empty)";
@@ -878,10 +882,12 @@ export class TodoScheduler {
 
   private scheduleCompletionReviews(): void {
     const ctx = this.context;
-    if (!this.active || !ctx) return;
+    // Guarded here rather than at the stateChanged() call site: a paused
+    // scheduler must not spend automation capacity on background reviews, and
+    // every caller reaches dispatch through this method.
+    if (!this.active || !ctx || this.automationPaused) return;
     for (const task of getState().tasks) {
-      if (task.review?.status !== "pending" || task.review.dispatchedAt !== undefined)
-        continue;
+      if (!isCompletionReviewDispatchable(task, Date.now())) continue;
       void this.runCompletionReview(task, ctx);
     }
   }

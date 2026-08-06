@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { Task, TaskAction, TaskMutationParams, TaskReview, TaskStatus } from "../tool/types.js";
-import { COMPLETION_REVIEW_MODEL, COMPLETION_REVIEWER_ID, isTaskArchivable } from "./completion.js";
+import {
+	COMPLETION_REVIEW_MODEL,
+	COMPLETION_REVIEWER_ID,
+	isTaskArchivable,
+	MAX_COMPLETION_REVIEW_ATTEMPTS,
+} from "./completion.js";
 import { isTransitionValid } from "./invariants.js";
 import type { TaskState } from "./state.js";
 import { detectCycle } from "./task-graph.js";
@@ -165,13 +170,24 @@ export function failCompletionReview(
 ): TaskState {
 	const task = state.tasks.find((candidate) => candidate.id === identity.taskId);
 	if (!matchingPendingReview(task, identity)) return state;
+	const attempts = (task.review.attempts ?? 0) + 1;
+	const exhausted = attempts >= MAX_COMPLETION_REVIEW_ATTEMPTS;
+	const review: TaskReview = {
+		...task.review,
+		failedAt,
+		attempts,
+		feedback: feedback.trim().slice(0, 4_000),
+	};
+	// Release the dispatch claim so the review is eligible again — holding it was
+	// what made one transient failure permanent. Once attempts are exhausted the
+	// review is rejected instead, which returns the task to the human the same way
+	// a substantive rejection does rather than leaving it silently unarchivable.
+	delete review.dispatchedAt;
+	if (exhausted) review.status = "rejected";
 	return replaceTask(state, {
 		...task,
-		review: {
-			...task.review,
-			failedAt,
-			feedback: feedback.trim().slice(0, 4_000),
-		},
+		status: exhausted ? "in_progress" : task.status,
+		review,
 	});
 }
 
@@ -374,7 +390,23 @@ export function applyTaskMutation(
 				delete updated.evidence;
 			}
 			if (newStatus === "waiting:user" || newStatus === "waiting:jobs") delete updated.waitEvidence;
-			if (scopeChanged(current, updated, params)) rotateIncarnation(state, current, updated, createToken);
+			if (scopeChanged(current, updated, params)) {
+				rotateIncarnation(state, current, updated, createToken);
+				// An already-completed task can have its subject/description/blockedBy/
+				// metadata changed without `completing` being true, so the block above
+				// never re-requests a review. Leaving the old approval in place would
+				// claim the reviewer approved scope it never saw.
+				if (!completion && updated.review?.status === "approved") {
+					updated.review = {
+						status: "pending",
+						generation: updated.review.generation + 1,
+						token: createToken(),
+						completionRevision: nextRevision(state),
+						requestedAt: now,
+						reviewer: { id: COMPLETION_REVIEWER_ID, model: COMPLETION_REVIEW_MODEL },
+					};
+				}
+			}
 
 			if (isDeepStrictEqual(updated, current)) {
 				return {

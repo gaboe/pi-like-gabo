@@ -84,6 +84,107 @@ test("paused dashboard artifact round-trips and accepts prior artifact shape", (
   }
 });
 
+test("provider error survives an artifact round-trip and is bounded", () => {
+  const directory = mkdtempSync(join(tmpdir(), "pi-workflow-dashboard-"));
+  try {
+    const runId = "wf_provider_error";
+    mkdirSync(join(directory, runId));
+    writeRun(directory, runId, {
+      sessionId: "session",
+      status: "completed",
+      startedAt: 1,
+      phases: [],
+      agents: [
+        {
+          index: 1,
+          label: "agent",
+          state: "error",
+          startedAt: 1,
+          providerError: {
+            status: 429,
+            code: "rate_limit_exceeded",
+            provider: "openai",
+            errorType: "RateLimitError",
+            retryAfter: 30,
+            resetAt: 1_700_000_000_000,
+          },
+        },
+      ],
+    });
+    const entry = loadRunEntries(
+      new Map(),
+      "session",
+      new Set(),
+      new Map(),
+      directory,
+    )[0]?.details;
+    assert.deepEqual(entry?.agents[0]?.providerError, {
+      status: 429,
+      code: "rate_limit_exceeded",
+      provider: "openai",
+      errorType: "RateLimitError",
+      retryAfter: 30,
+      resetAt: 1_700_000_000_000,
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("provider error drops out-of-range and untyped fields", () => {
+  const directory = mkdtempSync(join(tmpdir(), "pi-workflow-dashboard-"));
+  try {
+    const runId = "wf_provider_error_bounds";
+    mkdirSync(join(directory, runId));
+    writeRun(directory, runId, {
+      sessionId: "session",
+      status: "completed",
+      startedAt: 1,
+      phases: [],
+      agents: [
+        {
+          index: 1,
+          label: "bad-status",
+          state: "error",
+          startedAt: 1,
+          providerError: {
+            status: 99,
+            retryAfter: -1,
+            resetAt: 0,
+            code: "   ",
+          },
+        },
+        {
+          index: 2,
+          label: "not-an-object",
+          state: "error",
+          startedAt: 1,
+          providerError: "boom",
+        },
+        {
+          index: 3,
+          label: "overlong",
+          state: "error",
+          startedAt: 1,
+          providerError: { code: "c".repeat(200) },
+        },
+      ],
+    });
+    const agents = loadRunEntries(
+      new Map(),
+      "session",
+      new Set(),
+      new Map(),
+      directory,
+    )[0]?.details.agents;
+    assert.equal(agents?.[0]?.providerError, undefined);
+    assert.equal(agents?.[1]?.providerError, undefined);
+    assert.equal(agents?.[2]?.providerError?.code?.length, 64);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("former live run reads once and recovers stale state", () => {
   const directory = mkdtempSync(join(tmpdir(), "pi-workflow-dashboard-"));
   try {

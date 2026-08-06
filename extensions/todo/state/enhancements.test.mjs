@@ -41,6 +41,11 @@ import {
   TODO_SNAPSHOT_TYPE,
 } from "./replay.ts";
 import {
+  completionReviewRetryDelayMs,
+  isCompletionReviewDispatchable,
+  MAX_COMPLETION_REVIEW_ATTEMPTS,
+} from "./completion.ts";
+import {
   applyTaskMutation,
   claimCompletionReview,
   failCompletionReview,
@@ -230,13 +235,91 @@ describe("todo completion evidence", () => {
     assert.equal(failed.tasks[0].review.status, "pending");
     assert.equal(failed.tasks[0].review.feedback, "review timed out");
     assert.equal(applyTaskMutation(failed, "clear", {}).op.kind, "error");
+    // The dispatch claim is released so the failure is retryable, but only after
+    // the backoff elapses — otherwise every state change re-dispatches it.
+    assert.equal(failed.tasks[0].review.dispatchedAt, undefined);
+    assert.equal(failed.tasks[0].review.attempts, 1);
+    assert.equal(isCompletionReviewDispatchable(failed.tasks[0], 4_100), false);
+    assert.equal(
+      isCompletionReviewDispatchable(
+        failed.tasks[0],
+        4_000 + completionReviewRetryDelayMs(1),
+      ),
+      true,
+    );
 
+    // A completed task from a snapshot predating the review requirement carries no
+    // review at all; requiring approval would strand it as un-archivable forever.
     const legacy = {
       tasks: [task(1, "completed", { result: "legacy", evidence: ["snapshot"] })],
       nextId: 2,
       revision: 1,
     };
-    assert.equal(applyTaskMutation(legacy, "clear", {}).op.kind, "error");
+    assert.equal(applyTaskMutation(legacy, "clear", {}).op.kind, "clear");
+  });
+
+  it("gives up after the attempt budget and hands the task back", () => {
+    let state = applyTaskMutation(
+      { tasks: [task(1)], nextId: 2, revision: 1 },
+      "update",
+      { id: 1, status: "completed", result: "done", evidence: ["test"] },
+    ).state;
+    for (let attempt = 1; attempt <= MAX_COMPLETION_REVIEW_ATTEMPTS; attempt += 1) {
+      const review = state.tasks[0].review;
+      const identity = {
+        taskId: 1,
+        generation: review.generation,
+        token: review.token,
+        completionRevision: review.completionRevision,
+      };
+      state = failCompletionReview(
+        claimCompletionReview(state, identity, attempt * 1_000),
+        identity,
+        `attempt ${attempt} failed`,
+        attempt * 1_000 + 1,
+      );
+      assert.equal(state.tasks[0].review.attempts, attempt);
+    }
+    assert.equal(state.tasks[0].review.status, "rejected");
+    assert.equal(state.tasks[0].status, "in_progress");
+    assert.equal(isCompletionReviewDispatchable(state.tasks[0], 10_000_000), false);
+  });
+
+  it("invalidates an approved review when completed scope changes", () => {
+    const completed = applyTaskMutation(
+      { tasks: [task(1)], nextId: 2, revision: 1 },
+      "update",
+      { id: 1, status: "completed", result: "done", evidence: ["test"] },
+    ).state;
+    const review = completed.tasks[0].review;
+    const identity = {
+      taskId: 1,
+      generation: review.generation,
+      token: review.token,
+      completionRevision: review.completionRevision,
+    };
+    const approved = settleCompletionReview(
+      claimCompletionReview(completed, identity, 2_000),
+      identity,
+      {
+        decision: "approved",
+        feedback: "Evidence matches.",
+        reviewerId: "todo-completion-reviewer",
+        model: "openai-codex/gpt-5.6-luna",
+        reviewedAt: 3_000,
+      },
+    );
+    assert.equal(applyTaskMutation(approved, "clear", {}).op.kind, "clear");
+
+    const rescoped = applyTaskMutation(approved, "update", {
+      id: 1,
+      subject: "different scope the reviewer never saw",
+    });
+    assert.equal(rescoped.op.kind, "update");
+    assert.equal(rescoped.state.tasks[0].review.status, "pending");
+    assert.equal(rescoped.state.tasks[0].review.generation, review.generation + 1);
+    assert.notEqual(rescoped.state.tasks[0].review.token, review.token);
+    assert.equal(applyTaskMutation(rescoped.state, "clear", {}).op.kind, "error");
   });
 
   it("blocks deletion until completion review approves the task", () => {

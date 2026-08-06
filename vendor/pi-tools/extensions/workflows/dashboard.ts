@@ -42,6 +42,7 @@ import {
   type Theme,
   type AgentRecord,
   type PhaseGroup,
+  type ProviderErrorMetadata,
   type TranscriptEntry,
   type WorkflowDetails,
 } from "./model.ts";
@@ -63,6 +64,43 @@ export interface RunEntry {
 
 function runsDir(): string {
   return path.join(getAgentDir(), "workflows");
+}
+
+function boundedProviderField(value: unknown, max = 64): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const clean = String(value)
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .trim();
+  return clean ? clean.slice(0, max) : undefined;
+}
+
+/**
+ * Mirrors `runner.ts`'s `providerErrorMetadataFromMessages` bounds. Without this
+ * the field is dropped on reload and provider diagnostics vanish from a
+ * completed or paused run.
+ */
+function normalizeProviderError(
+  value: unknown,
+): ProviderErrorMetadata | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const status = Number(raw.status);
+  const retryAfter = Number(raw.retryAfter);
+  const resetAt = Number(raw.resetAt);
+  const code = boundedProviderField(raw.code);
+  const provider = boundedProviderField(raw.provider, 128);
+  const errorType = boundedProviderField(raw.errorType);
+  const metadata: ProviderErrorMetadata = {
+    ...(Number.isInteger(status) && status >= 100 && status <= 599
+      ? { status }
+      : {}),
+    ...(code ? { code } : {}),
+    ...(provider ? { provider } : {}),
+    ...(errorType ? { errorType } : {}),
+    ...(Number.isFinite(retryAfter) && retryAfter >= 0 ? { retryAfter } : {}),
+    ...(Number.isFinite(resetAt) && resetAt > 0 ? { resetAt } : {}),
+  };
+  return Object.keys(metadata).length ? metadata : undefined;
 }
 
 function normalizeTranscript(value: unknown): TranscriptEntry[] {
@@ -166,6 +204,7 @@ function normalizeDetails(
         a.retryCategory === "unknown"
           ? a.retryCategory
           : undefined,
+      providerError: normalizeProviderError(a.providerError),
       usage: {
         input: 0,
         output: 0,

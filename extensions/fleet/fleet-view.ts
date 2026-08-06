@@ -76,6 +76,12 @@ function formatAge(at: number, now = Date.now()): string {
   return formatElapsed(at, now);
 }
 
+/** Shared by renderItem and getRenderSignature so the two cannot drift apart. */
+export function formatItemActivity(item: FleetItem): string | undefined {
+  const activityAt = item.lastActivityAt ?? item.updatedAt;
+  return activityAt === undefined ? undefined : `active ${formatAge(activityAt)} ago`;
+}
+
 function formatTokens(tokens: number): string {
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
   if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`;
@@ -249,6 +255,13 @@ export class FleetView {
         item.status,
         item.settledAt,
         formatElapsed(item.startedAt, item.settledAt),
+        // Derived strings, not just raw state: `active <age> ago` and `stale`
+        // change as the clock moves while the item itself is unchanged, so the
+        // signature must carry what renderItem actually prints.
+        formatItemActivity(item),
+        isStale(item),
+        item.retryState,
+        item.quotaState,
         item.tokens,
         item.turns,
         item.maxTurns,
@@ -359,10 +372,9 @@ export class FleetView {
             ? "workflow"
             : "  ↳ agent";
     const left = `  ${this.marker(index, selected, theme)} ${theme.fg(statusColor, "■")} ${theme.fg("muted", kind)}  ${item.title}${item.detail ? theme.fg("dim", ` · ${item.detail}`) : ""}`;
-    const activityAt = item.lastActivityAt ?? item.updatedAt;
     const stats = [
       formatElapsed(item.startedAt, item.settledAt),
-      activityAt !== undefined ? `active ${formatAge(activityAt)} ago` : undefined,
+      formatItemActivity(item),
       isStale(item) ? "stale" : undefined,
       item.retryState,
       item.quotaState,

@@ -64,6 +64,8 @@ export interface TaskReview {
 	dispatchedAt?: number;
 	reviewedAt?: number;
 	failedAt?: number;
+	/** Failed dispatches so far. Drives retry backoff and the give-up transition. */
+	attempts?: number;
 	reviewer: { id: string; model: string };
 	feedback?: string;
 }
