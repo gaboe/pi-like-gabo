@@ -3,8 +3,11 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 
-export const PI_LENS_URL = "https://github.com/apmantza/pi-lens";
-export const PI_LENS_INSTALL = "pi install git:github.com/apmantza/pi-lens";
+/** Owner of the reviewed fork this package bundles — deliberately NOT upstream `apmantza`. */
+export const PI_LENS_OWNER = "gaboe";
+export const PI_LENS_REPO = `${PI_LENS_OWNER}/pi-lens`;
+export const PI_LENS_URL = `https://github.com/${PI_LENS_REPO}`;
+export const PI_LENS_INSTALL = `pi install git:github.com/${PI_LENS_REPO}`;
 
 export type CapabilityKind = "extension" | "skill" | "theme" | "tool" | "command" | "provider" | "dependency" | "optional" | "discovery";
 export type CapabilityState = "registered" | "loaded" | "active" | "optional" | "degraded";
@@ -164,7 +167,9 @@ function executableAvailable(name: string, env: NodeJS.ProcessEnv): boolean {
 function isPiLensPackageSource(value: string): boolean {
   const source = value.trim().toLowerCase();
   if (/^(?:npm:)?pi-lens(?:@[^/\s]+)?$/.test(source)) return true;
-  return /^(?:git:)?(?:(?:https?|ssh):\/\/git@|(?:https?|ssh):\/\/|git@)?github\.com[/:]apmantza\/pi-lens(?:\.git)?(?:@[^/?#]+)?(?:[?#].*)?$/.test(source);
+  // Owner-agnostic on purpose: this detects a SEPARATE pi-lens declaration, and a
+  // fork under any owner is the duplicate ownership the bundled package forbids.
+  return /^(?:git:)?(?:(?:https?|ssh):\/\/git@|(?:https?|ssh):\/\/|git@)?github\.com[/:][^/:]+\/pi-lens(?:\.git)?(?:@[^/?#]+)?(?:[?#].*)?$/.test(source);
 }
 
 function settingsDeclarePiLens(file: string): boolean {
@@ -397,7 +402,7 @@ export function collectCapabilityRecords(adapters: DiscoveryAdapters): Capabilit
       id: "optional:pi-lens",
       kind: "optional",
       state: lens.state,
-      provenance: { owner: "apmantza/pi-lens", source: PI_LENS_URL },
+      provenance: { owner: PI_LENS_REPO, source: PI_LENS_URL },
       diagnostics: [{
         code: `pi-lens-${lens.state}`,
         message: `detection=${lens.detection}; installed=${lens.installed}; extension=${lens.extensionActive}; config=${lens.configPresent}; separate failure domain`,

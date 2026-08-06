@@ -10,6 +10,7 @@ import {
   discoverRuntimeRecords,
   formatDoctorReport,
   PI_LENS_INSTALL,
+  PI_LENS_OWNER,
   PI_LENS_URL,
 } from "./doctor.ts";
 
@@ -153,14 +154,17 @@ test("pi-lens fixtures distinguish absent, configured, present, malformed, and u
   mkdirSync(settingsDir, { recursive: true });
   const settingsFile = path.join(settingsDir, "settings.json");
   writeFileSync(settingsFile, JSON.stringify({
-    packages: ["not-pi-lens", "npm:pi-lens-extra", "git:github.com/apmantza/not-pi-lens"],
+    packages: ["not-pi-lens", "npm:pi-lens-extra", `git:github.com/${PI_LENS_OWNER}/not-pi-lens`],
     extensions: ["pi-lens"],
   }));
   const falsePositiveSettings = detectPiLens({ cwd, home: settingsHome, configFiles: [], resolvePackage: () => { throw new Error("missing"); } });
   assert.equal(falsePositiveSettings.detection, "optional-absent");
-  writeFileSync(settingsFile, JSON.stringify({ packages: [{ source: "git:github.com/apmantza/pi-lens" }] }));
+  writeFileSync(settingsFile, JSON.stringify({ packages: [{ source: `git:github.com/${PI_LENS_OWNER}/pi-lens` }] }));
   const exactSettings = detectPiLens({ cwd, home: settingsHome, configFiles: [], resolvePackage: () => { throw new Error("missing"); } });
   assert.equal(exactSettings.detection, "configured");
+  writeFileSync(settingsFile, JSON.stringify({ packages: [{ source: "git:github.com/apmantza/pi-lens" }] }));
+  const upstreamSettings = detectPiLens({ cwd, home: settingsHome, configFiles: [], resolvePackage: () => { throw new Error("missing"); } });
+  assert.equal(upstreamSettings.detection, "configured");
 });
 
 test("root package pins, bundles, and activates pi-lens", () => {
@@ -178,6 +182,6 @@ test("root package pins, bundles, and activates pi-lens", () => {
     (manifest.pi?.extensions ?? []).includes("./node_modules/pi-lens/dist/index.js"),
     true,
   );
-  assert.equal((manifest.bundledDependencies ?? []).includes("pi-lens"), true);
-  assert.equal((manifest.bundleDependencies ?? []).includes("pi-lens"), true);
+  assert.deepEqual([...(manifest.bundleDependencies ?? [])].sort(), ["pi-caveman", "pi-lens"]);
+  assert.equal("bundledDependencies" in manifest, false);
 });
