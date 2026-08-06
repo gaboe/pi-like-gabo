@@ -1,7 +1,14 @@
-import type {
-  ExtensionAPI,
-  ExtensionContext,
+import {
+  buildContextEntries,
+  type ExtensionAPI,
+  type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import {
+  contextReportOffset,
+  contextReportPage,
+  formatContextReport,
+} from "./context-report.ts";
 import {
   CHILD_COST_CHANNEL,
   CHILD_COST_ENTRY,
@@ -77,6 +84,93 @@ export default function modelInfo(pi: ExtensionAPI) {
   const disposeCallbacks: (() => void)[] = [];
 
   const publish = () => pi.events.emit(MODEL_INFO_CHANNEL, { ...state });
+
+  pi.registerCommand("context", {
+    description: "Show Pi context estimate and estimated context breakdown",
+    handler: async (_args, ctx) => {
+      const options = ctx.getSystemPromptOptions();
+      const skills = options.skills?.map(({ name, description, filePath }) => ({
+        name,
+        description,
+        filePath,
+      }));
+      const lines = formatContextReport({
+        usage: ctx.getContextUsage(),
+        systemPrompt: ctx.getSystemPrompt(),
+        entries: buildContextEntries(ctx.sessionManager.getBranch()),
+        activeTools: pi
+          .getAllTools()
+          .filter((tool) => pi.getActiveTools().includes(tool.name)),
+        contextFiles: options.contextFiles,
+        skills,
+      });
+      await ctx.ui.custom(
+        (tui, theme, _keybindings, done) => {
+          let offset = 0;
+          const pageHeight = () =>
+            Math.max(1, Math.floor(tui.terminal.rows * 0.9) - 1);
+          const move = (delta: number) => {
+            offset = contextReportOffset(
+              lines.length,
+              offset,
+              delta,
+              pageHeight(),
+            );
+            tui.requestRender();
+          };
+          return {
+            render: (width: number) => {
+              const page = contextReportPage(
+                lines,
+                width,
+                offset,
+                pageHeight(),
+              );
+              return [
+                ...page.map((line, index) =>
+                  index === 0 && offset === 0
+                    ? theme.fg("accent", truncateToWidth(line, width, "…"))
+                    : truncateToWidth(line, width, "…"),
+                ),
+                truncateToWidth(
+                  `↑↓/jk scroll · PgUp/PgDn or u/d page · Home/End · ${offset + 1}-${offset + page.length}/${lines.length} · Esc/q/Enter close`,
+                  width,
+                  "…",
+                ),
+              ];
+            },
+            handleInput: (data: string) => {
+              if (
+                matchesKey(data, Key.escape) ||
+                data === "q" ||
+                matchesKey(data, Key.enter)
+              )
+                done(undefined);
+              else if (matchesKey(data, Key.up) || data === "k") move(-1);
+              else if (matchesKey(data, Key.down) || data === "j") move(1);
+              else if (matchesKey(data, Key.pageUp) || data === "u")
+                move(-pageHeight());
+              else if (matchesKey(data, Key.pageDown) || data === "d")
+                move(pageHeight());
+              else if (matchesKey(data, Key.home)) move(-lines.length);
+              else if (matchesKey(data, Key.end)) move(lines.length);
+            },
+            invalidate: () => {},
+          };
+        },
+        {
+          overlay: true,
+          overlayOptions: {
+            anchor: "center",
+            margin: 1,
+            maxHeight: "90%",
+            minWidth: 60,
+            width: "90%",
+          },
+        },
+      );
+    },
+  });
 
   function refresh(ctx: ExtensionContext) {
     currentContext = ctx;

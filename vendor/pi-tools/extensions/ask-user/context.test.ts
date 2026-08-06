@@ -6,6 +6,211 @@ import askUser, {
   renderAskUserLayout,
 } from "./index.ts";
 import { ASK_USER_PROMPT_GUIDELINES } from "./prompt.ts";
+import {
+  ASK_USER_TIMEOUT_MS,
+  createTuiDeadline,
+  deadlineDelay,
+  isClearlyLocalReversibleOption,
+  parseTimeoutVerdict,
+  runTimeoutVerifier,
+  verifiedLocalSelection,
+} from "./safety.ts";
+
+test("timeout safety validators fail closed", () => {
+  assert.equal(ASK_USER_TIMEOUT_MS, 600_000);
+  assert.equal(deadlineDelay(10, 5), 0);
+  assert.equal(deadlineDelay(10, 15), 5);
+  assert.equal(isClearlyLocalReversibleOption("Run workspace tests"), true);
+  assert.equal(isClearlyLocalReversibleOption("Push PR"), false);
+  assert.deepEqual(
+    parseTimeoutVerdict(
+      '{"verdict":"select","index":0,"audit":"local test"}',
+      1,
+    ),
+    { verdict: "select", index: 0, audit: "local test" },
+  );
+  assert.equal(
+    parseTimeoutVerdict('{"verdict":"select","index":2,"audit":"bad"}', 1),
+    undefined,
+  );
+  assert.equal(
+    parseTimeoutVerdict(
+      '{"verdict":"select","index":0,"audit":"x","extra":true}',
+      1,
+    ),
+    undefined,
+  );
+  assert.equal(parseTimeoutVerdict("not json", 1), undefined);
+  const safe = {
+    question: "Which local check?",
+    options: [{ label: "Run tests", description: "Read-only verification" }],
+  };
+  assert.deepEqual(
+    verifiedLocalSelection('{"verdict":"select","index":0,"audit":"ok"}', safe),
+    { verdict: "select", index: 0, audit: "ok" },
+  );
+  assert.equal(
+    parseTimeoutVerdict(
+      '{"verdict":"decline","index":0,"audit":"bad keys"}',
+      1,
+    ),
+    undefined,
+  );
+  for (const unsafe of [
+    "Push",
+    "PR",
+    "deploy",
+    "email",
+    "Jira",
+    "commit",
+    "merge",
+    "release",
+    "publish",
+    "delete",
+    "drop",
+    "reset",
+    "token",
+    "password",
+    "purchase",
+  ])
+    assert.equal(
+      verifiedLocalSelection('{"verdict":"select","index":0,"audit":"no"}', {
+        ...safe,
+        options: [{ label: `Run tests then ${unsafe}` }],
+      }),
+      undefined,
+    );
+  assert.equal(
+    verifiedLocalSelection('{"verdict":"select","index":0,"audit":"no"}', {
+      ...safe,
+      context: "Deploy after test",
+    }),
+    undefined,
+  );
+  for (const field of [
+    "approvalScope",
+    "considerations",
+    "recommendation",
+    "explanation",
+  ] as const)
+    assert.equal(
+      verifiedLocalSelection('{"verdict":"select","index":0,"audit":"no"}', {
+        ...safe,
+        [field]:
+          field === "considerations"
+            ? ["email owner"]
+            : field === "explanation"
+              ? { label: "deploy" }
+              : "delete workspace",
+      }),
+      undefined,
+    );
+  assert.equal(
+    verifiedLocalSelection('{"verdict":"select","index":0,"audit":"no"}', {
+      ...safe,
+      multiSelect: true,
+    }),
+    undefined,
+  );
+});
+
+test("deadline aborts only TUI signal and cleanup clears timer", () => {
+  let callback: (() => void) | undefined;
+  let cleared = false;
+  const parent = new AbortController();
+  const deadline = createTuiDeadline(600_000, parent.signal, {
+    setTimeout: ((fn: () => void) => {
+      callback = fn;
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout,
+    clearTimeout: (() => {
+      cleared = true;
+    }) as typeof clearTimeout,
+  });
+  callback?.();
+  assert.equal(deadline.signal.aborted, true);
+  assert.equal(parent.signal.aborted, false);
+  assert.equal(deadline.timedOut(), true);
+  deadline.cleanup();
+  assert.equal(cleared, true);
+});
+
+test("production timeout verifier runs once, maps zero-based selections, and defers unsafe results", async () => {
+  const params = {
+    question: "Which local check?",
+    options: [
+      { label: "Run workspace tests" },
+      { label: "Inspect workspace diff" },
+    ],
+  };
+  let calls = 0;
+  const selected = await runTimeoutVerifier(params, {
+    run: async () => {
+      calls++;
+      return {
+        status: "done",
+        output: '{"verdict":"select","index":1,"audit":"local"}',
+      };
+    },
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(selected, {
+    kind: "selected",
+    verdict: { verdict: "select", index: 1, audit: "local" },
+  });
+
+  for (const completion of [
+    { status: "done" as const, output: "bad" },
+    {
+      status: "done" as const,
+      output: '{"verdict":"select","index":0,"audit":"local"}',
+    },
+    { status: "error" as const, output: "", error: "x".repeat(600) },
+  ]) {
+    const outcome = await runTimeoutVerifier(
+      completion.status === "done" && completion.output.startsWith("{")
+        ? { ...params, context: "deploy later" }
+        : params,
+      { run: async () => completion },
+    );
+    assert.equal(outcome.kind, "defer");
+    if (outcome.kind === "defer")
+      assert.ok(outcome.verdict.audit.length <= 500);
+  }
+  assert.equal((await runTimeoutVerifier(params, undefined)).kind, "defer");
+});
+
+test("production timeout verifier cancels spawned service and cannot select after parent abort", async () => {
+  const parent = new AbortController();
+  let release!: () => void;
+  let cancelled: readonly string[] | undefined;
+  const outcome = runTimeoutVerifier(
+    {
+      question: "Which local check?",
+      options: [{ label: "Run workspace tests" }],
+    },
+    {
+      run: async (onSpawn) => {
+        onSpawn("verifier-1");
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return {
+          status: "done",
+          output: '{"verdict":"select","index":0,"audit":"local"}',
+        };
+      },
+      cancel: async (ids) => {
+        cancelled = ids;
+      },
+    },
+    parent.signal,
+  );
+  parent.abort();
+  release();
+  assert.deepEqual(await outcome, { kind: "aborted" });
+  assert.deepEqual(cancelled, ["verifier-1"]);
+});
 
 test("contextual decisions expose evidence, recommendation, and approval scope", () => {
   assert.deepEqual(
@@ -375,6 +580,7 @@ test("arrow navigation updates selected proposal before confirmation", async () 
   assert.match(renders[1], /Beta proposal marker/);
   assert.doesNotMatch(renders[1], /Alpha proposal marker/);
   assert.equal(result.details.answer, "Beta");
+  assert.equal(result.details.index, 2);
 });
 
 test("multi-select toggles compatible options and returns ordered arrays", async () => {

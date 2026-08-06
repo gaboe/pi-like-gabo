@@ -21,6 +21,7 @@ import {
 const WIDGET_KEY = "fleet-navigation";
 const MAX_VISIBLE_ITEMS = 5;
 const TICK_MS = 250;
+export const STALE_AFTER_MS = 60_000;
 
 type FleetEntry = { kind: "main" } | FleetItem;
 
@@ -60,6 +61,25 @@ function formatElapsed(startedAt: number, settledAt?: number): string {
   return seconds >= 60
     ? `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`
     : `${seconds}s`;
+}
+
+export function isStale(item: FleetItem, now = Date.now()): boolean {
+  const activityAt = item.lastActivityAt ?? item.updatedAt;
+  return (
+    item.status === "running" &&
+    activityAt !== undefined &&
+    now - activityAt >= STALE_AFTER_MS
+  );
+}
+
+function formatAge(at: number, now = Date.now()): string {
+  return formatElapsed(at, now);
+}
+
+/** Shared by renderItem and getRenderSignature so the two cannot drift apart. */
+export function formatItemActivity(item: FleetItem): string | undefined {
+  const activityAt = item.lastActivityAt ?? item.updatedAt;
+  return activityAt === undefined ? undefined : `active ${formatAge(activityAt)} ago`;
 }
 
 function formatTokens(tokens: number): string {
@@ -235,6 +255,13 @@ export class FleetView {
         item.status,
         item.settledAt,
         formatElapsed(item.startedAt, item.settledAt),
+        // Derived strings, not just raw state: `active <age> ago` and `stale`
+        // change as the clock moves while the item itself is unchanged, so the
+        // signature must carry what renderItem actually prints.
+        formatItemActivity(item),
+        isStale(item),
+        item.retryState,
+        item.quotaState,
         item.tokens,
         item.turns,
         item.maxTurns,
@@ -347,6 +374,10 @@ export class FleetView {
     const left = `  ${this.marker(index, selected, theme)} ${theme.fg(statusColor, "■")} ${theme.fg("muted", kind)}  ${item.title}${item.detail ? theme.fg("dim", ` · ${item.detail}`) : ""}`;
     const stats = [
       formatElapsed(item.startedAt, item.settledAt),
+      formatItemActivity(item),
+      isStale(item) ? "stale" : undefined,
+      item.retryState,
+      item.quotaState,
       item.tokens ? `${formatTokens(item.tokens)} tokens` : undefined,
       item.turns
         ? `${item.turns}${item.maxTurns ? `/${item.maxTurns}` : ""} turns`

@@ -47,6 +47,7 @@ import {
   emptyUsage,
   turnBudgetBreakdown,
   type AgentUsage,
+  type ProviderErrorMetadata,
   type TranscriptEntry,
 } from "./model.ts";
 import {
@@ -95,6 +96,7 @@ export interface AgentOutcome {
   usage: AgentUsage;
   model?: string;
   contextWindow?: number;
+  providerError?: ProviderErrorMetadata;
   transcript: TranscriptEntry[];
 }
 
@@ -731,6 +733,69 @@ function makeStructuredOutputTool(
   });
 }
 
+const TRUSTED_PROVIDER_DIAGNOSTICS = new Set([
+  "pi_messages_response_failure",
+  "provider_error",
+  "api_error",
+]);
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function boundedField(value: unknown, max = 64) {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const clean = String(value)
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .trim();
+  return clean ? clean.slice(0, max) : undefined;
+}
+
+export function providerErrorMetadataFromMessages(
+  messages: AgentMessage[],
+): ProviderErrorMetadata | undefined {
+  const assistant = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant");
+  if (!assistant || assistant.role !== "assistant") return undefined;
+  const diagnostic = [...(assistant.diagnostics ?? [])]
+    .reverse()
+    .find((item) => TRUSTED_PROVIDER_DIAGNOSTICS.has(item.type));
+  if (!diagnostic) return undefined;
+  const details = record(diagnostic.details);
+  const nestedError = record(details?.error);
+  const diagnosticError = record(diagnostic.error);
+  const status = Number(
+    details?.status ?? details?.statusCode ?? details?.httpStatus,
+  );
+  const code = boundedField(
+    details?.code ?? nestedError?.code ?? diagnosticError?.code,
+  );
+  const errorType = boundedField(
+    details?.errorType ??
+      details?.type ??
+      nestedError?.type ??
+      nestedError?.name ??
+      diagnosticError?.name,
+  );
+  const provider = boundedField(assistant.provider, 128);
+  const retryAfter = Number(details?.retryAfter ?? details?.retry_after);
+  const resetAt = Number(details?.resetAt ?? details?.reset_at);
+  const metadata: ProviderErrorMetadata = {
+    ...(Number.isInteger(status) && status >= 100 && status <= 599
+      ? { status }
+      : {}),
+    ...(code ? { code } : {}),
+    ...(provider ? { provider } : {}),
+    ...(errorType ? { errorType } : {}),
+    ...(Number.isFinite(retryAfter) && retryAfter >= 0 ? { retryAfter } : {}),
+    ...(Number.isFinite(resetAt) && resetAt > 0 ? { resetAt } : {}),
+  };
+  return Object.keys(metadata).length > 1 || !provider ? metadata : undefined;
+}
+
 function finalOutput(messages: AgentMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
@@ -1127,6 +1192,7 @@ export async function runAgent(
 
   let output = "";
   let transcript: TranscriptEntry[] = [];
+  let providerError: ProviderErrorMetadata | undefined;
   try {
     if (!aborted) {
       const watchdog = createFirstResponseWatchdog(() => childSession.abort(), {
@@ -1153,12 +1219,14 @@ export async function runAgent(
         AGENT_OUTPUT_MAX_BYTES,
       );
       transcript = transcriptFromMessages(childSession.messages, toolTimings);
+      providerError = providerErrorMetadataFromMessages(childSession.messages);
       await shutdownAndDisposeChildSession(childSession);
     } finally {
       workspaceWorker?.close();
     }
   }
 
+  const providerMetadata = providerError ? { providerError } : {};
   const turnLimitError = turnBudget.error();
   if (turnLimitError || aborted || stopReason === "aborted") {
     return {
@@ -1171,6 +1239,7 @@ export async function runAgent(
       usage,
       model: modelId,
       contextWindow,
+      ...providerMetadata,
       transcript,
     };
   }
@@ -1186,6 +1255,7 @@ export async function runAgent(
       usage,
       model: modelId,
       contextWindow,
+      ...providerMetadata,
       transcript,
     };
   }
@@ -1200,6 +1270,7 @@ export async function runAgent(
       usage,
       model: modelId,
       contextWindow,
+      ...providerMetadata,
       transcript,
     };
   }
@@ -1212,6 +1283,7 @@ export async function runAgent(
     usage,
     model: modelId,
     contextWindow,
+    ...providerMetadata,
     transcript,
   };
 }

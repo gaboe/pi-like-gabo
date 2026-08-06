@@ -20,6 +20,17 @@ it("does not use step count as a classifier signal", () => {
   assert.equal(classifyOrchestration("Do task", { steps: ["one", "two", "three", "four"] }).requiresOrchestration, false);
 });
 
+it("guides non-blocking subagents without banning dependency waits", async () => {
+  const { ORCHESTRATOR_GUIDANCE } = await import("./orchestrator.ts");
+  assert.match(ORCHESTRATOR_GUIDANCE, /non-blocking background subagent spawns/);
+  assert.match(ORCHESTRATOR_GUIDANCE, /conflict checks.*safe independent worker capacity.*continue other TODOs/);
+  assert.match(ORCHESTRATOR_GUIDANCE, /only background work remains.*completion delivery/);
+  assert.match(ORCHESTRATOR_GUIDANCE, /subagent_wait only for already-settled collection, non-interactive execution, or a concrete dependency\/result-freshness gate/);
+  assert.match(ORCHESTRATOR_GUIDANCE, /do not blanket-ban waiting when a concrete dependency exists/);
+  assert.match(ORCHESTRATOR_GUIDANCE, /task-local direct TODO remains parent-owned.*aggregate mode is sticky/);
+  assert.match(ORCHESTRATOR_GUIDANCE, /never edit reserved orchestration metadata/);
+});
+
 it("calls the classifier for raw and prepared dossiers", async () => {
   const calls = [];
   const unregister = registerBackgroundSubagentService({ async run(request) { calls.push(request); return { id: "classifier", status: "done", output: '{"requiresOrchestration":false,"signals":[]}' }; } });

@@ -144,6 +144,7 @@ export default function whatsNext(pi: ExtensionAPI): void {
         return;
       }
       let result: BackgroundSubagentResult;
+      ctx.ui.setStatus("whats-next", ctx.ui.theme.fg("accent", "⏳ Reviewing next steps…"));
       try {
         result = await service.run({
           title: "Review what comes next",
@@ -167,6 +168,8 @@ export default function whatsNext(pi: ExtensionAPI): void {
         const message = error instanceof Error ? error.message : String(error);
         pi.sendMessage({ customType: "whats-next", content: `Unable to assess next steps: ${message}`, display: true });
         return;
+      } finally {
+        ctx.ui.setStatus("whats-next", undefined);
       }
       const review = result.status === "done" ? parseReview(result.output) : undefined;
       const currentTodos = todoEvidence();

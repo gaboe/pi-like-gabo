@@ -1,4 +1,9 @@
-import type { TranscriptEntry, WorkflowDetails } from "./model.ts";
+import type {
+  TranscriptEntry,
+  WorkflowDetails,
+  WorkflowStatus,
+} from "./model.ts";
+import type { WorkflowJournal } from "./journal.ts";
 import {
   safeStringify,
   truncateUtf8,
@@ -200,6 +205,9 @@ export function createWorkflowPersistence(
       }
       timer = setTimeout(savePending, delay);
     },
+    markDirty() {
+      dirty = true;
+    },
     flush() {
       if (timer) clearTimeout(timer);
       timer = undefined;
@@ -208,4 +216,61 @@ export function createWorkflowPersistence(
       lastPersistedAt = Date.now();
     },
   };
+}
+
+export interface WorkflowArtifactPersistence {
+  markDirty(): void;
+  flush(): void;
+}
+
+function persistenceError(error: unknown) {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 512);
+}
+
+export function finalizeWorkflowPersistence(
+  details: WorkflowDetails,
+  status: Exclude<WorkflowStatus, "running">,
+  persistence: WorkflowArtifactPersistence,
+  journal: WorkflowJournal,
+) {
+  const failed = (reason: string) => {
+    details.status = "failed";
+    details.error = reason;
+    details.finishedAt ??= Date.now();
+    persistence.markDirty();
+  };
+
+  details.status = status;
+  details.finishedAt ??= Date.now();
+  persistence.markDirty();
+  try {
+    persistence.flush();
+  } catch (error) {
+    failed(`Artifact persistence failed: ${persistenceError(error)}`);
+    try {
+      persistence.flush();
+    } catch (failure) {
+      throw new Error(
+        `Workflow terminal persistence failed; journal left unsealed: ${persistenceError(failure)}`,
+      );
+    }
+    journal.seal("failed");
+    return "failed" as const;
+  }
+
+  try {
+    journal.seal(status);
+    return status;
+  } catch (error) {
+    failed(`Journal persistence failed: ${persistenceError(error)}`);
+    try {
+      persistence.flush();
+      journal.seal("failed");
+    } catch (failure) {
+      throw new Error(
+        `Workflow terminal journal recovery failed: ${persistenceError(failure)}`,
+      );
+    }
+    return "failed" as const;
+  }
 }

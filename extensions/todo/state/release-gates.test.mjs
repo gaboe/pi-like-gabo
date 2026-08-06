@@ -27,6 +27,21 @@ import { buildToolResult } from "../tool/response-envelope.ts";
 import { SUBAGENT_DELEGATION_STATE_CHANNEL } from "../../../vendor/pi-tools/extensions/shared/subagent-wait-protocol.ts";
 import { registerBackgroundSubagentService } from "../../../vendor/pi-tools/extensions/shared/background-subagent-protocol.ts";
 
+const approvedReview = () => ({
+  status: "approved",
+  generation: 1,
+  token: "review-token",
+  completionRevision: 1,
+  requestedAt: 1,
+  dispatchedAt: 2,
+  completedAt: 3,
+  reviewer: {
+    id: "todo-completion-reviewer",
+    model: "openai-codex/gpt-5.6-luna",
+  },
+  feedback: "verified",
+});
+
 const task = (status = "pending", extra = {}) => ({
   id: 1,
   subject: "Package",
@@ -49,6 +64,9 @@ class Bus {
 
 function owned(status = "in_progress", delegation = "running") {
   return task(status, {
+    ...(status === "completed"
+      ? { result: "done", evidence: ["verified"], review: approvedReview() }
+      : {}),
     metadata: {
       preparation: { status: "ready", token: "prep-secret" },
       orchestrator: { mode: "sticky" },
@@ -144,6 +162,41 @@ describe("release orchestration gates", () => {
       new RegExp(`  todo_id: 1\\n  todo_token: ${rotatedToken}`),
     );
     assert.doesNotMatch(fetched.content[0].text, new RegExp(token));
+  });
+
+  it("rejects tool mutations of reserved orchestration metadata", async () => {
+    __resetState();
+    commitState({
+      tasks: [
+        task("in_progress", {
+          metadata: {
+            preparation: { status: "ready", token: "prep-secret" },
+            orchestrator: { mode: "direct" },
+          },
+        }),
+      ],
+      nextId: 2,
+      revision: 1,
+    });
+    let tool;
+    registerTodoTool({
+      registerTool(definition) {
+        tool = definition;
+      },
+      appendEntry() {},
+    });
+    const before = structuredClone(getState());
+    for (const key of ["delegation", "orchestrator", "preparation"]) {
+      const result = await tool.execute(
+        "update",
+        { action: "update", id: 1, metadata: { [key]: "sticky" } },
+        undefined,
+        undefined,
+        { cwd: "/repo" },
+      );
+      assert.match(result.content[0].text, new RegExp(`metadata\\.${key} is reserved`));
+      assert.deepEqual(getState(), before);
+    }
   });
 
   it("fails package assignment closed while ordinary scouts bypass gate", () => {
@@ -250,7 +303,7 @@ describe("release orchestration gates", () => {
     );
     assert.match(
       scheduler.packageAssignmentError(1, "prep-secret", "off"),
-      /provisional or sticky/,
+      /orchestrator setting is off/,
     );
     scheduler.dispose();
     adapter.dispose();
@@ -294,7 +347,7 @@ describe("release orchestration gates", () => {
     try {
       assert.match(
         scheduler.packageAssignmentError(1, "direct-token", "auto"),
-        /target TODO's own provisional or sticky/,
+        /target TODO is direct.*Execute it in the parent/,
       );
       assert.equal(
         scheduler.packageAssignmentError(2, "sticky-token", "auto"),
@@ -317,7 +370,7 @@ describe("release orchestration gates", () => {
             },
           },
         ),
-        /target TODO's own provisional or sticky/,
+        /target TODO is direct.*Execute it in the parent/,
       );
       assert.deepEqual(bodies, { manager: 0, spawn: 0, cancel: 0 });
     } finally {
@@ -411,6 +464,60 @@ describe("release orchestration gates", () => {
       ]);
     } finally {
       releaseAlpha?.();
+      unregister();
+      scheduler.dispose();
+      adapter.dispose();
+    }
+  });
+
+  it("cancels interrupted package workers when automation pauses", async () => {
+    __resetState();
+    commitState({
+      tasks: [
+        task("in_progress", {
+          metadata: {
+            preparation: { status: "ready", token: "prep-secret" },
+            orchestrator: { mode: "sticky" },
+          },
+        }),
+      ],
+      nextId: 2,
+      revision: 1,
+      orchestrator: { setting: "auto", sticky: true },
+    });
+    const bus = new Bus();
+    const adapter = new JobsAdapter(bus);
+    const cancelled = [];
+    const unregister = registerBackgroundSubagentService({
+      async run() {
+        return { id: "unused", status: "done", output: "{}" };
+      },
+      async cancel(ids) {
+        cancelled.push(...ids);
+      },
+    });
+    const scheduler = new TodoScheduler(
+      { events: bus, appendEntry() {}, sendMessage() {} },
+      adapter,
+      () => {},
+    );
+    try {
+      scheduler.activate({});
+      bus.emit(SUBAGENT_DELEGATION_STATE_CHANNEL, {
+        delegations: [{ id: "worker-1", todo_id: 1, todo_token: "prep-secret" }],
+      });
+
+      scheduler.pauseAutomation();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // Marking the owner interrupted is not enough — the worker keeps burning
+      // capacity unless the service is told to cancel it.
+      assert.deepEqual(cancelled, ["worker-1"]);
+      assert.equal(
+        getState().tasks[0].metadata.delegation.status,
+        "interrupted",
+      );
+    } finally {
       unregister();
       scheduler.dispose();
       adapter.dispose();
@@ -583,6 +690,8 @@ describe("release orchestration gates", () => {
     const completion = applyTaskMutation(waiting, "update", {
       id: 1,
       status: "completed",
+      result: "done",
+      evidence: ["verified"],
     });
     assert.equal(completion.op.kind, "error");
     assert.match(completion.op.message, /jobs wait remains active/);
@@ -623,7 +732,15 @@ describe("release orchestration gates", () => {
     });
     commitState({
       ...getState(),
-      tasks: [{ ...getState().tasks[0], status: "completed" }],
+      tasks: [
+        {
+          ...getState().tasks[0],
+          status: "completed",
+          result: "done",
+          evidence: ["verified"],
+          review: approvedReview(),
+        },
+      ],
       revision: getState().revision + 1,
     });
     scheduler.stateChanged();
@@ -632,7 +749,7 @@ describe("release orchestration gates", () => {
     assert.equal(getState().tasks[0].metadata.delegation.status, "cancelled");
     assert.equal(
       sent.filter(
-        (message) => message.customType === "rpiv-todo:completion-review",
+        (message) => message.customType === "rpiv-todo:completion-report",
       ).length,
       1,
     );
@@ -645,7 +762,7 @@ describe("release orchestration gates", () => {
     assert.equal(getState().tasks[0].metadata.delegation.status, "cancelled");
     assert.equal(
       sent.filter(
-        (message) => message.customType === "rpiv-todo:completion-review",
+        (message) => message.customType === "rpiv-todo:completion-report",
       ).length,
       1,
     );
@@ -743,7 +860,7 @@ describe("release orchestration gates", () => {
       assert.equal(hasCompletedBatch(), true);
       assert.equal(
         sent.filter(
-          ({ customType }) => customType === "rpiv-todo:completion-review",
+          ({ customType }) => customType === "rpiv-todo:completion-report",
         ).length,
         1,
       );
@@ -826,7 +943,7 @@ describe("release orchestration gates", () => {
       );
       assert.equal(
         sent.filter(
-          (message) => message.customType === "rpiv-todo:completion-review",
+          (message) => message.customType === "rpiv-todo:completion-report",
         ).length,
         1,
       );
@@ -853,7 +970,7 @@ describe("release orchestration gates", () => {
       );
       assert.equal(
         sent.filter(
-          (message) => message.customType === "rpiv-todo:completion-review",
+          (message) => message.customType === "rpiv-todo:completion-report",
         ).length,
         1,
       );
@@ -938,6 +1055,9 @@ describe("release orchestration gates", () => {
         {
           ...current,
           status: "completed",
+          result: "done",
+          evidence: ["verified"],
+          review: approvedReview(),
           metadata: {
             ...current.metadata,
             delegation: { ...current.metadata.delegation, status: "cancelled" },
@@ -955,7 +1075,7 @@ describe("release orchestration gates", () => {
     );
     assert.deepEqual(
       sent.map(({ customType }) => customType),
-      ["rpiv-todo:completion-review"],
+      ["rpiv-todo:completion-report"],
     );
     scheduler.dispose();
     adapter.dispose();

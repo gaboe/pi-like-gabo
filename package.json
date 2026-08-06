@@ -1,6 +1,6 @@
 {
   "name": "pi-like-gabo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Gabo's reviewed extensions, skills, and orchestration tools for Pi.",
@@ -36,6 +36,7 @@
   },
   "pi": {
     "extensions": [
+      "./extensions/permissions/index.ts",
       "./extensions/telemetry/index.ts",
       "./extensions/automation-pause/index.ts",
       "./extensions/multi-skills/index.ts",
@@ -48,7 +49,7 @@
       "./extensions/rtk/index.ts",
       "./extensions/decision-guidance/index.ts",
       "./extensions/shared-memory/index.ts",
-      "./vendor/pi-caveman/extensions/caveman.ts",
+      "./node_modules/pi-caveman/extensions/caveman.ts",
       "./vendor/pi-tools/extensions/ask-user/index.ts",
       "./vendor/pi-tools/extensions/background-terminals/index.ts",
       "./extensions/jobs/index.ts",
@@ -61,7 +62,9 @@
       "./vendor/pi-tools/extensions/summaries/index.ts",
       "./vendor/pi-tools/extensions/ui-customization/index.ts",
       "./vendor/pi-tools/extensions/workflows/index.ts",
-      "./extensions/fleet/index.ts"
+      "./extensions/fleet/index.ts",
+      "./extensions/pi-doctor/index.ts",
+      "./node_modules/pi-lens/dist/index.js"
     ],
     "skills": [
       "./skills/pi-orchestration",
@@ -93,9 +96,20 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "@effect/platform-node": "4.0.0-beta.99",
+    "@effect/platform-node-shared": "4.0.0-beta.99",
+    "acorn": "8.17.0",
+    "effect": "4.0.0-beta.99",
+    "firecrawl": "4.30.1",
     "jsonpath-plus": "^10.4.0",
+    "pi-caveman": "git+https://github.com/jonjonrankin/pi-caveman.git#0d4c639d672b0b80afaa035f582152dcab9c6a8f",
+    "pi-lens": "git+https://github.com/gaboe/pi-lens.git#d463994aa3be2adb3b5c4905f5010bd2cd782f9d",
     "re2js": "^2.8.6",
     "undici": "^8.7.0",
     "ws": "^8.21.1"
-  }
+  },
+  "bundleDependencies": [
+    "pi-caveman",
+    "pi-lens"
+  ]
 }

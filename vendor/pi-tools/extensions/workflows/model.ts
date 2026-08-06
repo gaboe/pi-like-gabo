@@ -46,7 +46,17 @@ export function emptyUsage(): AgentUsage {
 }
 
 export type AgentState = "running" | "done" | "error";
-export type WorkflowStatus = "running" | "completed" | "failed" | "aborted";
+export type WorkflowStatus =
+  "running" | "paused" | "completed" | "failed" | "aborted";
+
+export interface ProviderErrorMetadata {
+  status?: number;
+  code?: string;
+  provider?: string;
+  errorType?: string;
+  retryAfter?: number;
+  resetAt?: number;
+}
 
 export type TranscriptRole =
   "user" | "assistant" | "thinking" | "tool" | "toolResult";
@@ -67,6 +77,16 @@ export interface TranscriptEntry {
   durationMs?: number;
 }
 
+export type RetryCategory =
+  | "transient_startup"
+  | "transport"
+  | "quota"
+  | "timeout"
+  | "validation"
+  | "policy"
+  | "deterministic"
+  | "unknown";
+
 export interface AgentRecord {
   index: number;
   label: string;
@@ -80,6 +100,9 @@ export interface AgentRecord {
   startedAt: number;
   finishedAt?: number;
   error?: string;
+  providerError?: ProviderErrorMetadata;
+  attempts?: number;
+  retryCategory?: RetryCategory;
   preview: string;
   usage: AgentUsage;
   maxTurns?: number;
@@ -106,6 +129,7 @@ export interface WorkflowDetails {
   resultArtifact?: string;
   transcriptArtifact?: string;
   error?: string;
+  paused?: { provider?: string; reason: string };
 }
 
 /** Colored square state indicator (no emojis/glyphs). */
@@ -119,7 +143,8 @@ export function stateSquare(state: AgentState, theme: Theme): string {
 
 export function statusSquare(status: WorkflowStatus, theme: Theme): string {
   if (status === "completed") return theme.fg("success", SQUARE);
-  if (status === "running") return theme.fg("warning", SQUARE);
+  if (status === "running" || status === "paused")
+    return theme.fg("warning", SQUARE);
   return theme.fg("error", SQUARE);
 }
 
@@ -131,7 +156,7 @@ export function statusColor(
   status: WorkflowStatus,
 ): "success" | "warning" | "error" {
   if (status === "completed") return "success";
-  if (status === "running") return "warning";
+  if (status === "running" || status === "paused") return "warning";
   return "error";
 }
 

@@ -38,6 +38,8 @@ After identifying the host, load [references/harnesses.md](references/harnesses.
 
 Typical lanes are authoritative source/documentation inspection, runtime or deterministic verification, implementation/synthesis, and independent adversarial review. Start safe read-only lanes in parallel. Serialize overlapping writes, shared worktree/ref mutations, and work whose premise is changing. More agents are not evidence by themselves, and duplicate generic reviews do not count as independent lanes.
 
+For any open-source library research, implementation claim, history question, or source-backed comparison, load and follow the `librarian` skill. Require version or commit scope and stable full-SHA GitHub permalinks for source claims when available.
+
 Prefer evidence in this order when applicable: current repository source and configuration, authoritative specifications or vendor documentation, reproducible runtime behavior, focused tests/checks, then secondary material. Inspect actual symbols, callers, boundaries, versions, and failure paths rather than relying on summaries. For implementation, inspect the current source and dirty state before editing, then verify the final current diff/state rather than a stale snapshot.
 
 ## Evidence ledger

@@ -15,7 +15,8 @@ import {
 	setCompactToolRenderer,
 	type CompactToolRendererApi,
 } from "../../vendor/pi-tools/extensions/shared/compact-tool-renderer-protocol.js";
-import { boundToolResultHistory } from "./context-budget.js";
+import { artifactLocation, ToolResultArtifacts } from "./artifacts.js";
+import { boundToolResultHistory, providerText, type RecoveryMarker } from "./context-budget.js";
 
 const CONFIG_ENTRY = "compact-tools-config";
 const SUMMARY_ENTRY = "compact-tools-summary";
@@ -30,8 +31,8 @@ const MAX_WIDTH = 110;
 
 function compactionThresholds(contextWindow: number | undefined) {
 	if (!contextWindow) return { compactAt: COMPACT_CONTEXT_AT_TOKENS, rearmAt: REARM_CONTEXT_COMPACTION_AT_TOKENS };
-	const compactAt = Math.min(COMPACT_CONTEXT_AT_TOKENS, Math.floor(contextWindow * 0.8));
-	return { compactAt, rearmAt: Math.min(REARM_CONTEXT_COMPACTION_AT_TOKENS, Math.floor(compactAt * 0.8)) };
+	const compactAt = Math.floor(contextWindow * 0.9);
+	return { compactAt, rearmAt: Math.floor(compactAt * 0.8) };
 }
 
 type ToolInfo = {
@@ -377,12 +378,43 @@ function summaryText(data: Summary): string {
 
 export default function compactTools(pi: ExtensionAPI) {
 	let contextCompactionArmed = true;
+	const artifactStores = new Map<string, ToolResultArtifacts>();
 	const patchOwner = Symbol("pi-plugins.compact-tools.patch-owner");
 	const priorRenderer = getCompactToolRenderer();
 	const rendererApi = createRendererApi(patchOwner, priorRenderer);
 	setCompactToolRenderer(rendererApi);
 	patchRenderer(patchOwner);
-	pi.on("context", (event) => ({ messages: boundToolResultHistory(event.messages) }));
+	pi.on("context", async (event, ctx) => {
+		const location = await artifactLocation(ctx.sessionManager.getSessionDir(), ctx.sessionManager.getSessionId());
+		let artifacts: ToolResultArtifacts | undefined;
+		if (location) {
+			artifacts = artifactStores.get(location.directory);
+			if (!artifacts) {
+				artifacts = new ToolResultArtifacts(location.directory, { root: location.root });
+				artifactStores.set(location.directory, artifacts);
+			}
+		}
+		const baseline = boundToolResultHistory(event.messages);
+		const pending = event.messages.flatMap((message, index) => {
+			const bounded = baseline[index] as { role?: string; content?: unknown[] };
+			if (message.role !== "toolResult" || !Array.isArray(message.content) || !Array.isArray(bounded?.content)) return [];
+			const text = providerText(message.content);
+			if (!text || text === providerText(bounded.content)) return [];
+			return [{ index, identity: `${index}\0${message.toolCallId ?? ""}`, text }];
+		});
+		const persisted = artifacts && pending.length ? await artifacts.persistBatch(pending) : [];
+		const recovered = new Map(pending.flatMap((item, pendingIndex) => {
+			const artifact = persisted[pendingIndex];
+			return artifact ? [[item.index, { ...artifact, lines: item.text.split("\n").length }] as const] : [];
+		}));
+		const recovery: RecoveryMarker = (_message, info, index) => {
+			const artifact = recovered.get(index);
+			if (!artifact) return undefined;
+			const nonText = info.omittedNonText ? ` nonText=${info.omittedNonText} omitted/not-persisted;` : "";
+			return `\n\n[Output omitted from LLM context. Recovery id=${artifact.id} path=${artifact.path} sha256=${artifact.sha256} utf8Bytes=${artifact.bytes} lines=1-${artifact.lines} chars=${info.start}-${info.end} omitted=${info.omitted} chars total=${info.total};${nonText} use read/rg.]\n\n`;
+		};
+		return { messages: boundToolResultHistory(event.messages, recovery) };
+	});
 	pi.on("agent_end", (_event, ctx) => {
 		const usage = ctx.getContextUsage();
 		const tokens = usage?.tokens;

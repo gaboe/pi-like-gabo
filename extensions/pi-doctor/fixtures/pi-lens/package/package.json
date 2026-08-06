@@ -1,0 +1,7 @@
+{
+  "name": "pi-lens",
+  "main": "./dist/index.js",
+  "pi": {
+    "extensions": ["./dist/index.js"]
+  }
+}

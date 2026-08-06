@@ -6,6 +6,7 @@ import { test } from "node:test";
 import {
   boundedArtifactTranscript,
   createWorkflowPersistence,
+  finalizeWorkflowPersistence,
   persistWorkflowJson,
 } from "./artifacts.ts";
 import {
@@ -189,4 +190,59 @@ test("workflow checkpoints throttle updates and support immediate/final flushes"
 
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(snapshots.length, 3);
+});
+
+test("terminal artifact flush failure persists and seals coherent failed recovery", () => {
+  const details = workflowDetails();
+  let flushes = 0;
+  const seals: string[] = [];
+  const persistence = {
+    markDirty() {},
+    flush() {
+      if (++flushes === 1) throw new Error("injected flush");
+    },
+  };
+  const status = finalizeWorkflowPersistence(
+    details,
+    "completed",
+    persistence,
+    {
+      generation: () => 1,
+      event: () => true,
+      seal: (reason) => {
+        seals.push(reason);
+      },
+    },
+  );
+  assert.equal(status, "failed");
+  assert.equal(details.status, "failed");
+  assert.deepEqual(seals, ["failed"]);
+});
+
+test("terminal artifact hard failure leaves journal unsealed", () => {
+  const details = workflowDetails();
+  let sealed = false;
+  assert.throws(
+    () =>
+      finalizeWorkflowPersistence(
+        details,
+        "completed",
+        {
+          markDirty() {},
+          flush() {
+            throw new Error("injected flush");
+          },
+        },
+        {
+          generation: () => 1,
+          event: () => true,
+          seal: () => {
+            sealed = true;
+          },
+        },
+      ),
+    /journal left unsealed/,
+  );
+  assert.equal(details.status, "failed");
+  assert.equal(sealed, false);
 });

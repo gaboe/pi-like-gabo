@@ -24,7 +24,11 @@ import { emitTelemetry } from "../telemetry/protocol.js";
 import { loadConfig, orchestratorEnabled } from "./config.js";
 import { orchestratorFooterStatus } from "./orchestrator.js";
 import { JobsAdapter } from "./jobs-adapter.js";
-import { TodoScheduler, persistTodoSnapshot } from "./scheduler.js";
+import {
+  isChatGptProUsageLimit,
+  TodoScheduler,
+  persistTodoSnapshot,
+} from "./scheduler.js";
 import { replayFromBranch } from "./state/replay.js";
 import {
   commitState,
@@ -58,6 +62,7 @@ export default function (pi: ExtensionAPI) {
   let todoOverlay: TodoOverlay | undefined;
   let stopStateTelemetry: (() => void) | undefined;
   let runAborted = false;
+  let runUsageLimited = false;
   const globalOrchestratorEnabled = orchestratorEnabled(loadConfig());
   let orchestratorSetting: "on" | "off" | "auto" = globalOrchestratorEnabled
     ? "auto"
@@ -253,6 +258,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("agent_start", async () => {
     runAborted = false;
+    runUsageLimited = false;
     scheduler.onAgentStart();
     todoOverlay?.hideCompletedTasksFromPreviousTurn();
   });
@@ -262,16 +268,19 @@ export default function (pi: ExtensionAPI) {
       const message = event.messages[index] as {
         role?: string;
         stopReason?: string;
+        errorMessage?: string;
       };
       if (message.role !== "assistant") continue;
       runAborted = message.stopReason === "aborted";
+      runUsageLimited = isChatGptProUsageLimit(message.errorMessage);
       break;
     }
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
-    scheduler.onAgentSettled(ctx, runAborted);
+    scheduler.onAgentSettled(ctx, runAborted, runUsageLimited);
     runAborted = false;
+    runUsageLimited = false;
     todoOverlay?.hideAllCompletedTasks();
   });
 }
