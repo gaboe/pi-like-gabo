@@ -45,7 +45,6 @@
       "./extensions/thinking-shortcuts/index.ts",
       "./extensions/ultrathink/index.ts",
       "./extensions/whats-next/index.ts",
-      "./extensions/compact-tools/index.ts",
       "./extensions/rtk/index.ts",
       "./extensions/decision-guidance/index.ts",
       "./extensions/shared-memory/index.ts",
@@ -64,6 +63,7 @@
       "./vendor/pi-tools/extensions/workflows/index.ts",
       "./extensions/fleet/index.ts",
       "./extensions/pi-doctor/index.ts",
+      "./extensions/mermaid/index.ts",
       "./node_modules/pi-lens/dist/index.js"
     ],
     "skills": [
@@ -71,6 +71,7 @@
       "./skills/orchestrator",
       "./skills/ultrathink",
       "./skills/whats-next",
+      "./skills/pi-like-gabo-reflect",
       "./skills/librarian",
       "./vendor/pi-tools/skills/background-terminals",
       "./vendor/pi-tools/skills/subagents"
@@ -99,9 +100,11 @@
     "@effect/platform-node": "4.0.0-beta.99",
     "@effect/platform-node-shared": "4.0.0-beta.99",
     "acorn": "8.17.0",
+    "beautiful-mermaid": "1.0.0",
     "effect": "4.0.0-beta.99",
     "firecrawl": "4.30.1",
     "jsonpath-plus": "^10.4.0",
+    "mermaid": "11.12.3",
     "pi-caveman": "git+https://github.com/jonjonrankin/pi-caveman.git#0d4c639d672b0b80afaa035f582152dcab9c6a8f",
     "pi-lens": "git+https://github.com/gaboe/pi-lens.git#d463994aa3be2adb3b5c4905f5010bd2cd782f9d",
     "re2js": "^2.8.6",

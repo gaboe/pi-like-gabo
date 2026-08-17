@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import askUser, {
+  askUserWithHerdrBlocked,
   buildAskUserContextSections,
   renderAskUserLayout,
 } from "./index.ts";
@@ -575,12 +576,111 @@ test("arrow navigation updates selected proposal before confirmation", async () 
     },
   );
 
-  assert.match(renders[0], /Alpha proposal marker/);
-  assert.doesNotMatch(renders[0], /Beta proposal marker/);
-  assert.match(renders[1], /Beta proposal marker/);
-  assert.doesNotMatch(renders[1], /Alpha proposal marker/);
+  assert.match(renders[0], /❯ 1\. Alpha/);
+  assert.match(renders[0], /Beta proposal marker/);
+  assert.match(renders[1], /❯ 2\. Beta/);
+  assert.match(renders[1], /Alpha proposal marker/);
   assert.equal(result.details.answer, "Beta");
   assert.equal(result.details.index, 2);
+});
+
+test("ask_user balances Herdr blocked state around interactive wait", async () => {
+  let tool: any;
+  const events: unknown[] = [];
+  askUser({
+    events: {
+      emit(name: string, payload: unknown) {
+        if (name === "herdr:blocked") events.push(payload);
+      },
+    },
+    registerTool(definition: unknown) {
+      tool = definition;
+    },
+  } as never);
+
+  await tool.execute(
+    "call",
+    { question: "Choose?", options: [{ label: "Yes" }, { label: "No" }] },
+    undefined,
+    undefined,
+    {
+      mode: "tui",
+      ui: {
+        custom(factory: Function) {
+          return new Promise((resolve) => {
+            const component = factory(
+              { requestRender() {}, terminal: { rows: 30, columns: 80 } },
+              { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+              {},
+              resolve,
+            );
+            component.handleInput("\r");
+          });
+        },
+      },
+    },
+  );
+
+  assert.deepEqual(events, [
+    { active: true, label: "Choose?" },
+    { active: false },
+  ]);
+});
+
+test("ask_user clears Herdr blocked state when the UI rejects", async () => {
+  let tool: any;
+  const events: unknown[] = [];
+  askUser({
+    events: {
+      emit(name: string, payload: unknown) {
+        if (name === "herdr:blocked") events.push(payload);
+      },
+    },
+    registerTool(definition: unknown) {
+      tool = definition;
+    },
+  } as never);
+
+  await assert.rejects(
+    tool.execute(
+      "call",
+      { question: "Choose?", options: [{ label: "Yes" }, { label: "No" }] },
+      undefined,
+      undefined,
+      { mode: "tui", ui: { custom: () => Promise.reject(new Error("UI closed")) } },
+    ),
+    /UI closed/,
+  );
+  assert.deepEqual(events, [
+    { active: true, label: "Choose?" },
+    { active: false },
+  ]);
+});
+
+test("ask_user balances blocked state across timeout abort and retry", async () => {
+  const events: unknown[] = [];
+  const eventBus = {
+    emit(name: string, payload: unknown) {
+      if (name === "herdr:blocked") events.push(payload);
+    },
+  };
+
+  await assert.rejects(
+    askUserWithHerdrBlocked(eventBus as never, "Choose?", async () => {
+      throw new DOMException("Timed out", "AbortError");
+    }),
+    { name: "AbortError" },
+  );
+  assert.equal(
+    await askUserWithHerdrBlocked(eventBus as never, "Choose?", async () => "retry"),
+    "retry",
+  );
+  assert.deepEqual(events, [
+    { active: true, label: "Choose?" },
+    { active: false },
+    { active: true, label: "Choose?" },
+    { active: false },
+  ]);
 });
 
 test("multi-select toggles compatible options and returns ordered arrays", async () => {
@@ -982,14 +1082,10 @@ test("interactive details preserve decision keys and scroll within terminal heig
               resolve,
             );
             renders.push(component.render(80));
-            component.handleInput("e");
-            renders.push(component.render(80));
-            component.handleInput("\r");
             component.handleInput("\x1b[6~");
             renders.push(component.render(80));
-            component.handleInput("\x1b");
-            renders.push(component.render(80));
             component.handleInput("\x1b[B");
+            renders.push(component.render(80));
             component.handleInput("\r");
           });
         },
@@ -997,13 +1093,10 @@ test("interactive details preserve decision keys and scroll within terminal heig
     },
   );
 
-  assert.match(renders[0].join("\n"), /e expand/);
-  assert.match(renders[1].join("\n"), /Decision details/);
-  assert.match(renders[1].join("\n"), /1-/);
-  assert.notEqual(renders[1].join("\n"), renders[2].join("\n"));
-  assert.match(renders[3].join("\n"), /Decision required/);
-  assert.ok(renders[1].length <= terminal.rows);
-  assert.ok(renders[2].length <= terminal.rows);
+  assert.match(renders[0].join("\n"), /Decision details/);
+  assert.match(renders[0].join("\n"), /1-/);
+  assert.notEqual(renders[0].join("\n"), renders[1].join("\n"));
+  assert.ok(renders.every((lines) => lines.length <= terminal.rows));
   assert.equal(result.details.answer, "No");
 });
 
@@ -1044,6 +1137,8 @@ test("interactive component recomputes on resize and clamps editor width", async
             rendered.push({ width: 60, lines: component.render(60) });
             rendered.push({ width: 30, lines: component.render(30) });
             component.handleInput("4");
+            component.handleInput("visible text");
+            rendered.push({ width: 30, lines: component.render(30) });
             rendered.push({ width: 3, lines: component.render(3) });
             resolve(null);
           });
@@ -1057,11 +1152,18 @@ test("interactive component recomputes on resize and clamps editor width", async
   }
   assert.equal(visibleWidth(rendered[0].lines[0]), 60);
   assert.equal(visibleWidth(rendered[1].lines[0]), 30);
+  assert.match(rendered[2].lines.join("\n"), /visible text/);
 });
 
-test("abort cancels ask_user and removes both abort listeners", async () => {
+test("abort cancels ask_user, clears blocked state, and removes listeners", async () => {
   let tool: any;
+  const blockedEvents: unknown[] = [];
   askUser({
+    events: {
+      emit(name: string, payload: unknown) {
+        if (name === "herdr:blocked") blockedEvents.push(payload);
+      },
+    },
     registerTool(definition: unknown) {
       tool = definition;
     },
@@ -1135,6 +1237,10 @@ test("abort cancels ask_user and removes both abort listeners", async () => {
   assert.equal(result.details.cancelled, true);
   assert.equal(doneCalls, 1);
   assert.equal(added, removed);
+  assert.deepEqual(blockedEvents, [
+    { active: true, label: "Choose?" },
+    { active: false },
+  ]);
 });
 
 test("ask_user keeps simple questions backward compatible and guides rich approvals", () => {

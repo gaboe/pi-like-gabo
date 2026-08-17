@@ -49,8 +49,10 @@ Package contents:
 - `orchestrator`: opt-in driver role for durable TODO planning, bounded delegation, concurrency gates, and evidence-based integration; moved from Nexus so the plugin is canonical
 - `ultrathink`: explicit `/ultrathink [task]` (or `$ultrathink`) mode for bounded multi-agent investigation, synthesis, implementation, and independent verification; without an argument it uses the current conversation task
 - `whats-next`: portable `/whats-next [focus]` or `$whats-next` skill reviews completed work; Pi's command uses one tool-free Terra subagent and presents material next steps through an explanatory `ask_user` multi-select
+- `pi-like-gabo-reflect`: user-invoked reflection that can turn verified session friction into minimal, tested Pi Like Gabo code or skill improvements
 - `librarian`: source-backed open-source research with full-SHA GitHub permalinks
 - `thinking-shortcuts`: `Shift+Up` increases and `Shift+Down` decreases thinking level
+- `mermaid`: renders Mermaid fenced blocks as width-aware ASCII diagrams in the TUI; `/pi-mermaid` re-renders the last assistant message
 - `btw`: parallel `/btw` side conversations
 - `comment-checker`: warns the agent after `edit`/`write` adds unnecessary comments
 - `rtk`: vendored official RTK hook; rewrites supported `bash` commands through local `rtk` binary only
@@ -64,7 +66,7 @@ Pi extensions execute with the user's full permissions. The permissions extensio
 
 Telemetry writes allowlisted lifecycle metadata to private rotating local JSONL files. Firecrawl sends search queries, URLs, and requested page content to its external service. Its API key is read from `~/.pi/agent/.env`; never commit or share that file. Remove Firecrawl from `pi.extensions` if external requests are not acceptable. The file-search setup downloads pinned `fd` and `rg` release binaries over HTTPS and verifies their SHA-256 checksums before installation. The current Pi CLI dependency shrinkwrap pins `brace-expansion@5.0.7`, which npm reports for GHSA-mh99-v99m-4gvg (local process availability/DoS); the latest compatible Pi package still contains it, so update when upstream refreshes that shrinkwrap and do not feed untrusted glob patterns into privileged unattended sessions. Do not install extensions whose permissions or data flow you have not reviewed.
 
-Project code is MIT licensed. Upstream notices and documentation remain under `LICENSES/`, vendor repositories, and each extension's `UPSTREAM.md`. The vendored RTK hook is Apache-2.0; source pin is [`extensions/rtk/UPSTREAM.md`](extensions/rtk/UPSTREAM.md).
+Project code is MIT licensed. Upstream notices and documentation remain under `LICENSES/`, vendor repositories, and each extension's `UPSTREAM.md`. Mermaid rendering is vendored from `pi-mermaid` 0.3.0 under MIT; source details are in [`extensions/mermaid/UPSTREAM.md`](extensions/mermaid/UPSTREAM.md). The vendored RTK hook is Apache-2.0; source pin is [`extensions/rtk/UPSTREAM.md`](extensions/rtk/UPSTREAM.md).
 
 ## Usage
 

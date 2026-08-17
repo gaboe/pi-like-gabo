@@ -7,7 +7,8 @@ Load only the active host section. Capability detection overrides examples.
 - Native worker: `subagent_spawn`; continuation/steering: `subagent_send`; collection: completion notifications or `subagent_wait` when needed.
 - Durable state: `todo`; bounded monitor: `jobs`; decision UI: `ask_user`.
 - Current in-process spawn schema has no `harness` selector. Never pass `harness`, `agent`, or `backend`.
-- Models: Luna low/medium for scouts and deterministic verification; Terra low for implementation; Sol low/medium for review and synthesis; Sol high only for consequential risk; xhigh only after documented high-effort insufficiency.
+- Model: use Luna for scouts, deterministic verification, and precisely scoped low-risk implementation with an existing pattern and deterministic check; Terra for ambiguous root causes, domain decisions, or broad/coupled implementation; Sol for review, synthesis, and consequential risk.
+- Effort: choose independently—low for mechanical work, medium for multi-step reasoning, high only for genuinely difficult bounded work, and xhigh only after documented high-effort insufficiency. Capability detection overrides these examples.
 - Turn budgets: 8–12 narrow scout, 16–24 broad review/planning, 24–32 implementation, 32–48 only for one justified cohesive package. Reserve final two turns for handoff.
 - Package workers use `package_handoff`; parent owns semantic acceptance and Git/external mutations.
 

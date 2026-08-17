@@ -67,9 +67,9 @@ test("automatically compacts after an agent ends above threshold and rearms belo
   agentEnd[0]({}, ctx);
   assert.equal(compactions, 2);
   assert.deepEqual(warnings, ["Automatic context compaction failed: failed"]);
-  tokens = 195_840;
+  tokens = 80_000;
   agentEnd[0]({}, ctx);
-  tokens = 244_801;
+  tokens = 100_001;
   agentEnd[0]({}, ctx);
   assert.equal(compactions, 3);
   await sessionStart({}, {
@@ -82,7 +82,7 @@ test("automatically compacts after an agent ends above threshold and rearms belo
   assert.equal(compactions, 4);
 });
 
-test("uses a 90% model-relative threshold", () => {
+test("uses a 70% model-relative threshold", () => {
   const agentEnd = [];
   let compactions = 0;
   compactTools({
@@ -94,7 +94,7 @@ test("uses a 90% model-relative threshold", () => {
     appendEntry() {},
   });
   agentEnd[0]({}, {
-    getContextUsage: () => ({ tokens: 54_001, contextWindow: 60_000 }),
+    getContextUsage: () => ({ tokens: 42_001, contextWindow: 60_000 }),
     compact: () => { compactions++; },
   });
   assert.equal(compactions, 1);
