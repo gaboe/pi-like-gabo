@@ -10,7 +10,7 @@ General display-only Pi tool renderer.
 - Preserves original renderers under `Ctrl+O`.
 - Reuses the same rows in subagent takeover transcripts.
 - Keeps modeled provider tool-result output under a shared 64 KiB budget. Each image/binary block costs the provider's 20-character image placeholder; each result keeps at most the newest 16 blocks and replaces excess/old blocks with text omissions. Image/binary bytes never persist.
-- Automatically compacts after an agent finishes above 90% of its model context window; unknown windows use 100k. It rearms at 80% of that threshold.
+- Automatically compacts after an agent finishes above the lower of 70% of its model context window or 100k tokens. It rearms at 80% of that threshold.
 
 Use `/compact-tools on|off|toggle|status`.
 

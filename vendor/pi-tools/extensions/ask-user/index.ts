@@ -466,16 +466,19 @@ export function renderAskUserLayout(options: {
     );
     for (let index = 0; index < allOptions.length; index++) {
       const option = allOptions[index];
-      const prefix = `  ${optionMarker(option, index)} `;
+      const selected = index === optionIndex;
+      const prefix = `  ${selected ? "❯" : " "} ${optionMarker(option, index)} `;
       const optionLabelLines = wrapText(
         option.label.slice(0, 160),
         Math.max(1, detailWidth - visibleWidth(prefix)),
       );
       detailLines.push(
-        ...optionLabelLines.map(
-          (line, lineIndex) =>
-            `${lineIndex === 0 ? prefix : " ".repeat(visibleWidth(prefix))}${line}`,
-        ),
+        ...optionLabelLines.map((line, lineIndex) => {
+          const label = selected
+            ? theme.fg("accent", theme.bold(line))
+            : theme.fg("text", line);
+          return `${lineIndex === 0 ? (selected ? theme.fg("accent", prefix) : prefix) : " ".repeat(visibleWidth(prefix))}${label}`;
+        }),
       );
       if (option.description) {
         detailLines.push(
@@ -498,6 +501,13 @@ export function renderAskUserLayout(options: {
       }
     }
     while (detailLines.at(-1) === "") detailLines.pop();
+    if (editMode) {
+      detailLines.push(
+        "",
+        theme.fg("accent", theme.bold("✎ Your answer:")),
+        ...(options.editorLines ?? []).slice(0, 8),
+      );
+    }
 
     const viewportHeight = Math.max(
       4,
@@ -514,9 +524,15 @@ export function renderAskUserLayout(options: {
       scrollOffset + bodyHeight,
     );
     const position = `${scrollOffset + 1}-${Math.min(detailLines.length, scrollOffset + bodyHeight)} / ${detailLines.length}`;
+
+    const navigationHint = editMode
+      ? "Enter submit • Esc back to options"
+      : options.multiSelect
+        ? `↑↓ move • Space or 1-${allOptions.length} toggle • Enter ${params.multiSelect ? "confirm" : "explain"} • Esc ${params.multiSelect ? "dismiss" : "back"}`
+        : `↑↓ or 1-${allOptions.length} select • Enter confirm • Esc dismiss`;
     const hint = maxScroll
-      ? "↑↓ line • PgUp/PgDn page • e/Esc back"
-      : "e/Esc back";
+      ? `${navigationHint} • PgUp/PgDn scroll`
+      : navigationHint;
 
     if (width < 24) {
       add(theme.fg("accent", theme.bold(`Details ${position}`)));
@@ -745,6 +761,19 @@ export type AskUserRuntime = {
   timers?: Parameters<typeof createTuiDeadline>[2];
 };
 
+export async function askUserWithHerdrBlocked<T>(
+  events: ExtensionAPI["events"] | undefined,
+  label: string,
+  wait: () => Promise<T>,
+): Promise<T> {
+  try {
+    events?.emit("herdr:blocked", { active: true, label });
+    return await wait();
+  } finally {
+    events?.emit("herdr:blocked", { active: false });
+  }
+}
+
 export default function askUser(
   pi: ExtensionAPI,
   runtime: AskUserRuntime = {},
@@ -834,17 +863,11 @@ export default function askUser(
           const selectedDecisionIndices = new Set<number>();
           let editMode = false;
           let editorPurpose: "answer" | "explanation" = "answer";
-          let expanded = false;
+          const expanded = true;
           let scrollOffset = 0;
           let cachedLines: string[] | undefined;
           let cachedWidth: number | undefined;
           let cachedRows: number | undefined;
-          const hasDetails =
-            buildAskUserContextSections(params).length > 0 ||
-            params.options.some((option) => option.details?.trim());
-          const hasExplanationDetails = explanationMenuOptions.some((option) =>
-            option.details?.trim(),
-          );
           const markdownTheme = markdownThemeFrom(theme);
 
           let settled = false;
@@ -919,6 +942,7 @@ export default function askUser(
               optionIndex = index;
               editorPurpose = "answer";
               editMode = true;
+              scrollOffset = Number.MAX_SAFE_INTEGER;
               refresh();
               return;
             }
@@ -959,6 +983,7 @@ export default function askUser(
             if (mode === "custom") {
               editorPurpose = "explanation";
               editMode = true;
+              scrollOffset = Number.MAX_SAFE_INTEGER;
               refresh();
               return;
             }
@@ -988,36 +1013,6 @@ export default function askUser(
           }
 
           function handleInput(data: string) {
-            if (expanded) {
-              if (data.toLowerCase() === "e" || matchesKey(data, Key.escape)) {
-                expanded = false;
-                scrollOffset = 0;
-                refresh();
-                return;
-              }
-              if (matchesKey(data, Key.up)) {
-                scrollOffset = Math.max(0, scrollOffset - 1);
-                refresh();
-                return;
-              }
-              if (matchesKey(data, Key.down)) {
-                scrollOffset += 1;
-                refresh();
-                return;
-              }
-              const pageSize = Math.max(1, tui.terminal.rows - 10);
-              if (matchesKey(data, Key.pageUp)) {
-                scrollOffset = Math.max(0, scrollOffset - pageSize);
-                refresh();
-                return;
-              }
-              if (matchesKey(data, Key.pageDown)) {
-                scrollOffset += pageSize;
-                refresh();
-              }
-              return;
-            }
-
             if (editMode) {
               if (matchesKey(data, Key.escape)) {
                 editMode = false;
@@ -1030,13 +1025,19 @@ export default function askUser(
               return;
             }
 
+            const pageSize = Math.max(1, tui.terminal.rows - 10);
+            if (matchesKey(data, Key.pageUp)) {
+              scrollOffset = Math.max(0, scrollOffset - pageSize);
+              refresh();
+              return;
+            }
+            if (matchesKey(data, Key.pageDown)) {
+              scrollOffset += pageSize;
+              refresh();
+              return;
+            }
+
             if (explanationMenu) {
-              if (data.toLowerCase() === "e" && hasExplanationDetails) {
-                expanded = true;
-                scrollOffset = 0;
-                refresh();
-                return;
-              }
               if (matchesKey(data, Key.up)) {
                 explanationIndex =
                   (explanationIndex - 1 + explanationMenuOptions.length) %
@@ -1071,13 +1072,6 @@ export default function askUser(
                 explanationIndex = 0;
                 refresh();
               }
-              return;
-            }
-
-            if (data.toLowerCase() === "e" && hasDetails) {
-              expanded = true;
-              scrollOffset = 0;
-              refresh();
               return;
             }
 
@@ -1202,7 +1196,11 @@ export default function askUser(
               uiSignal.removeEventListener("abort", cancel);
             },
           };
-        });
+          });
+      const showBlockedQuestion = (uiSignal: AbortSignal) =>
+        askUserWithHerdrBlocked(pi.events, params.question, () =>
+          showQuestion(uiSignal),
+        );
 
       const deadline = createTuiDeadline(
         ASK_USER_TIMEOUT_MS,
@@ -1228,7 +1226,7 @@ export default function askUser(
         if (uiSignal.aborted) {
           cancel();
         } else {
-          void showQuestion(uiSignal).then(finish, (error) => {
+          void showBlockedQuestion(uiSignal).then(finish, (error) => {
             if (settled) return;
             settled = true;
             uiSignal.removeEventListener("abort", cancel);
@@ -1290,7 +1288,9 @@ export default function askUser(
           );
         }
         timeoutVerifier = verification.verdict;
-        result = await showQuestion(signal ?? new AbortController().signal);
+        result = await showBlockedQuestion(
+          signal ?? new AbortController().signal,
+        );
         cancelled = Boolean(signal?.aborted);
       }
 

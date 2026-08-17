@@ -4,17 +4,26 @@ Choose the narrowest role that can produce independently checkable evidence. Eve
 
 ## Model and effort routing
 
-Identify the active harness before routing. Always set effort explicitly when supported and set model explicitly when the harness exposes a selector. Use only model ids valid for that harness; concrete mappings live in [references/harnesses.md](references/harnesses.md). Use the lowest tier that fits because deterministic checks and short feedback loops compensate for lower effort.
+Identify the active harness before routing. Choose model and effort independently, and always set both explicitly when supported. Use only model ids valid for that harness; concrete mappings live in [references/harnesses.md](./references/harnesses.md). Use the lowest tier that fits because deterministic checks and short feedback loops compensate for lower effort.
 
-| Work                                                                          | Model class | Effort |
-| ----------------------------------------------------------------------------- | ----------- | ------ |
-| Deterministic verifier or focused scout                                       | Lowest capable native model | `low` |
-| Broad repository exploration                                                  | Native scouting model | `medium` |
-| Bounded or multi-file implementation, ambiguous root cause                    | Native implementation model | `low` |
-| Routine review                                                                | Native review model | `low` |
-| Planning, synthesis, or complex implementation                                | Native reasoning model | `medium` |
-| Security, concurrency, money, migration, or irreversible-risk analysis        | Strong native reasoning model | `high` |
-| Critical problem after a documented high-effort attempt failed for reasoning depth | Strongest justified native model | Highest justified setting |
+Choose the model by capability and work type:
+
+| Work | Model class |
+| ----------------------------------------------------------------------------- | ----------- |
+| Deterministic verifier, focused scout, or precisely scoped low-risk implementation with an existing pattern and deterministic check | Lowest capable native model |
+| Ambiguous root cause, domain decision, or broad/coupled implementation | Native implementation model |
+| Routine review | Native review model |
+| Planning, synthesis, or complex implementation | Native reasoning model |
+| Security, concurrency, money, migration, or irreversible-risk analysis | Strong native reasoning model |
+
+Choose effort separately by reasoning depth:
+
+| Reasoning depth | Effort |
+| ------------------------------- | ------------------------- |
+| Mechanical or direct | `low` |
+| Multi-step | `medium` |
+| Genuinely difficult but bounded | `high` |
+| Documented high-effort insufficiency | Highest justified setting |
 
 A failed check is evidence to fix the concrete defect at the same harness/model tier, not automatic justification for more reasoning. Escalate one step at a time. Never select a maximum setting automatically; the highest setting requires evidence that the prior one was insufficient.
 

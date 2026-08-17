@@ -10,10 +10,18 @@
  * from `tool_execution_end` (branch is stale; `message_end` runs after).
  */
 
-import type { ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionUIContext,
+	Theme,
+} from "@earendil-works/pi-coding-agent";
 import { type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 import { formatStatusLabel, t } from "./state/i18n-bridge.js";
-import { selectHasActive, selectOverlayLayout, selectShowTaskIds, selectTodoCounts } from "./state/selectors.js";
+import {
+	selectHasActive,
+	selectOverlayLayout,
+	selectShowTaskIds,
+	selectTodoCounts,
+} from "./state/selectors.js";
 import { getState } from "./state/store.js";
 import { formatOverlayTaskLine } from "./view/format.js";
 
@@ -33,6 +41,8 @@ export class TodoOverlay {
 	private completedTaskIdsPendingHide = new Set<number>();
 	private hiddenCompletedTaskIds = new Set<number>();
 	private lastNextId: number | undefined;
+
+	constructor(private readonly isResuming = () => false) {}
 
 	setUICtx(ctx: ExtensionUIContext): void {
 		// Identity-compare so repeat session_start handlers are idempotent;
@@ -109,23 +119,34 @@ export class TodoOverlay {
 		}
 		this.lastNextId = state.nextId;
 		const completedTaskIds = new Set(
-			state.tasks.filter((task) => task.status === "completed").map((task) => task.id),
+			state.tasks
+				.filter((task) => task.status === "completed")
+				.map((task) => task.id),
 		);
 		for (const taskId of this.completedTaskIdsPendingHide) {
-			if (!completedTaskIds.has(taskId)) this.completedTaskIdsPendingHide.delete(taskId);
+			if (!completedTaskIds.has(taskId))
+				this.completedTaskIdsPendingHide.delete(taskId);
 		}
 		for (const taskId of this.hiddenCompletedTaskIds) {
-			if (!completedTaskIds.has(taskId)) this.hiddenCompletedTaskIds.delete(taskId);
+			if (!completedTaskIds.has(taskId))
+				this.hiddenCompletedTaskIds.delete(taskId);
 		}
 		return { tasks: [...state.tasks], nextId: state.nextId };
 	}
 
 	private selectOverlayTasks(snapshot: ReturnType<TodoOverlay["getSnapshot"]>) {
-		return snapshot.tasks.filter((task) => task.status !== "deleted" && !this.shouldHideCompletedTask(task));
+		return snapshot.tasks.filter(
+			(task) =>
+				task.status !== "deleted" && !this.shouldHideCompletedTask(task),
+		);
 	}
 
-	private shouldHideCompletedTask(task: ReturnType<TodoOverlay["getSnapshot"]>["tasks"][number]): boolean {
-		return task.status === "completed" && this.hiddenCompletedTaskIds.has(task.id);
+	private shouldHideCompletedTask(
+		task: ReturnType<TodoOverlay["getSnapshot"]>["tasks"][number],
+	): boolean {
+		return (
+			task.status === "completed" && this.hiddenCompletedTaskIds.has(task.id)
+		);
 	}
 
 	private renderWidget(theme: Theme, width: number): string[] {
@@ -133,21 +154,32 @@ export class TodoOverlay {
 		const overlayTasks = this.selectOverlayTasks(snapshot);
 		if (overlayTasks.length === 0) return [];
 
-		const overlayState = { tasks: overlayTasks, nextId: snapshot.nextId, revision: 0 };
-		const truncate = (line: string): string => truncateToWidth(line, width, "…");
+		const overlayState = {
+			tasks: overlayTasks,
+			nextId: snapshot.nextId,
+			revision: 0,
+		};
+		const truncate = (line: string): string =>
+			truncateToWidth(line, width, "…");
 		const counts = selectTodoCounts(overlayState);
 		const hasActive = selectHasActive(overlayState);
 		const showIds = selectShowTaskIds(overlayState);
 
 		const headingColor = hasActive ? "accent" : "dim";
 		const headingIcon = hasActive ? "●" : "○";
-		const headingText = `${t("overlay.heading", OVERLAY_HEADING)} (${counts.completed}/${counts.total})`;
-		const heading = truncate(`${theme.fg(headingColor, headingIcon)} ${theme.fg(headingColor, headingText)}`);
+		const headingText = `${t("overlay.heading", OVERLAY_HEADING)} (${counts.completed}/${counts.total})${this.isResuming() ? " · Resuming TODO…" : ""}`;
+		const heading = truncate(
+			`${theme.fg(headingColor, headingIcon)} ${theme.fg(headingColor, headingText)}`,
+		);
 
 		const lines: string[] = [heading];
 		const layout = selectOverlayLayout(overlayState, MAX_WIDGET_LINES - 1);
 		for (const task of layout.visible) {
-			lines.push(truncate(`${theme.fg("dim", "├─")} ${formatOverlayTaskLine(task, theme, showIds)}`));
+			lines.push(
+				truncate(
+					`${theme.fg("dim", "├─")} ${formatOverlayTaskLine(task, theme, showIds)}`,
+				),
+			);
 		}
 
 		const newlyDisplayedCompletedTaskIds = overlayTasks
@@ -170,12 +202,22 @@ export class TodoOverlay {
 
 		const totalHidden = layout.hiddenCompleted + layout.truncatedTail;
 		const overflowParts: string[] = [];
-		if (layout.hiddenCompleted > 0) overflowParts.push(`${layout.hiddenCompleted} ${formatStatusLabel("completed")}`);
-		if (layout.truncatedTail > 0) overflowParts.push(`${layout.truncatedTail} ${formatStatusLabel("pending")}`);
+		if (layout.hiddenCompleted > 0)
+			overflowParts.push(
+				`${layout.hiddenCompleted} ${formatStatusLabel("completed")}`,
+			);
+		if (layout.truncatedTail > 0)
+			overflowParts.push(
+				`${layout.truncatedTail} ${formatStatusLabel("pending")}`,
+			);
 		const more = t("overlay.more", OVERLAY_MORE);
 		const summary =
-			overflowParts.length > 0 ? `+${totalHidden} ${more} (${overflowParts.join(", ")})` : `+${totalHidden} ${more}`;
-		lines.push(truncate(`${theme.fg("dim", "└─")} ${theme.fg("dim", summary)}`));
+			overflowParts.length > 0
+				? `+${totalHidden} ${more} (${overflowParts.join(", ")})`
+				: `+${totalHidden} ${more}`;
+		lines.push(
+			truncate(`${theme.fg("dim", "└─")} ${theme.fg("dim", summary)}`),
+		);
 		return this.withTrailingSpacer(lines);
 	}
 

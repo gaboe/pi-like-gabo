@@ -1,4 +1,8 @@
-import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	Theme,
+} from "@earendil-works/pi-coding-agent";
 import { ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import {
@@ -16,22 +20,39 @@ import {
 	type CompactToolRendererApi,
 } from "../../vendor/pi-tools/extensions/shared/compact-tool-renderer-protocol.js";
 import { artifactLocation, ToolResultArtifacts } from "./artifacts.js";
-import { boundToolResultHistory, providerText, type RecoveryMarker } from "./context-budget.js";
+import {
+	boundToolResultHistory,
+	providerText,
+	type RecoveryMarker,
+} from "./context-budget.js";
 
 const CONFIG_ENTRY = "compact-tools-config";
 const SUMMARY_ENTRY = "compact-tools-summary";
 const PATCH_KEY = Symbol.for("pi-plugins.compact-tools.patch.v1");
 const STATE_KEY = Symbol.for("pi-plugins.compact-tools.state.v1");
-const RENDERER_OWNER_KEY = Symbol.for("pi-plugins.compact-tools.renderer-owner.v1");
-const RENDERER_PRIOR_KEY = Symbol.for("pi-plugins.compact-tools.renderer-prior.v1");
-const RENDERER_ACTIVE_KEY = Symbol.for("pi-plugins.compact-tools.renderer-active.v1");
+const RENDERER_OWNER_KEY = Symbol.for(
+	"pi-plugins.compact-tools.renderer-owner.v1",
+);
+const RENDERER_PRIOR_KEY = Symbol.for(
+	"pi-plugins.compact-tools.renderer-prior.v1",
+);
+const RENDERER_ACTIVE_KEY = Symbol.for(
+	"pi-plugins.compact-tools.renderer-active.v1",
+);
 const COMPACT_CONTEXT_AT_TOKENS = 100_000;
 const REARM_CONTEXT_COMPACTION_AT_TOKENS = 80_000;
 const MAX_WIDTH = 110;
 
-function compactionThresholds(contextWindow: number | undefined) {
-	if (!contextWindow) return { compactAt: COMPACT_CONTEXT_AT_TOKENS, rearmAt: REARM_CONTEXT_COMPACTION_AT_TOKENS };
-	const compactAt = Math.floor(contextWindow * 0.9);
+export function compactionThresholds(contextWindow: number | undefined) {
+	if (!contextWindow)
+		return {
+			compactAt: COMPACT_CONTEXT_AT_TOKENS,
+			rearmAt: REARM_CONTEXT_COMPACTION_AT_TOKENS,
+		};
+	const compactAt = Math.min(
+		COMPACT_CONTEXT_AT_TOKENS,
+		Math.floor(contextWindow * 0.7),
+	);
 	return { compactAt, rearmAt: Math.floor(compactAt * 0.8) };
 }
 
@@ -78,19 +99,27 @@ type RuntimeState = {
 type Summary = Omit<Stats, "startedAt"> & { durationMs: number };
 
 function newStats(): Stats {
-	return { startedAt: Date.now(), reads: 0, searches: 0, commands: 0, mutations: 0, others: 0, failed: 0 };
+	return {
+		startedAt: Date.now(),
+		reads: 0,
+		searches: 0,
+		commands: 0,
+		mutations: 0,
+		others: 0,
+		failed: 0,
+	};
 }
 
 function runtime(): RuntimeState {
 	const root = globalThis as typeof globalThis & { [STATE_KEY]?: RuntimeState };
-	return root[STATE_KEY] ??= {
+	return (root[STATE_KEY] ??= {
 		enabled: true,
 		cwd: process.cwd(),
 		tools: new Map(),
 		group: [],
 		components: new Set(),
 		stats: newStats(),
-	};
+	});
 }
 
 const state = runtime();
@@ -100,7 +129,10 @@ type OwnedRendererApi = CompactToolRendererApi & {
 	[RENDERER_ACTIVE_KEY]: boolean;
 };
 
-function createRendererApi(owner: symbol, prior: CompactToolRendererApi | undefined): OwnedRendererApi {
+function createRendererApi(
+	owner: symbol,
+	prior: CompactToolRendererApi | undefined,
+): OwnedRendererApi {
 	const api: CompactToolRendererApi = {
 		version: 1,
 		enabled: () => state.enabled,
@@ -114,12 +146,20 @@ function createRendererApi(owner: symbol, prior: CompactToolRendererApi | undefi
 	return api as OwnedRendererApi;
 }
 
-function isOwnedRenderer(api: CompactToolRendererApi | undefined): api is OwnedRendererApi {
-	return !!api && typeof (api as Partial<OwnedRendererApi>)[RENDERER_OWNER_KEY] === "symbol";
+function isOwnedRenderer(
+	api: CompactToolRendererApi | undefined,
+): api is OwnedRendererApi {
+	return (
+		!!api &&
+		typeof (api as Partial<OwnedRendererApi>)[RENDERER_OWNER_KEY] === "symbol"
+	);
 }
 
-function activeRenderer(api: CompactToolRendererApi | undefined): CompactToolRendererApi | undefined {
-	while (isOwnedRenderer(api) && !api[RENDERER_ACTIVE_KEY]) api = api[RENDERER_PRIOR_KEY];
+function activeRenderer(
+	api: CompactToolRendererApi | undefined,
+): CompactToolRendererApi | undefined {
+	while (isOwnedRenderer(api) && !api[RENDERER_ACTIVE_KEY])
+		api = api[RENDERER_PRIOR_KEY];
 	return api;
 }
 
@@ -150,7 +190,12 @@ function joinGroup(info: ToolInfo) {
 	state.group.at(-2)?.invalidate?.();
 }
 
-function hydrate(id: string, name: string, args: unknown, isError = false): ToolInfo | undefined {
+function hydrate(
+	id: string,
+	name: string,
+	args: unknown,
+	isError = false,
+): ToolInfo | undefined {
 	const category = categoryFor(name);
 	if (!category) {
 		state.group = [];
@@ -207,7 +252,12 @@ function finalizeOutput(info: ToolInfo, result: unknown) {
 	info.outputLineCount = nonEmptyLineCount(info.compactOutput);
 }
 
-function finish(id: string, result: unknown, isError: boolean, partial: boolean) {
+function finish(
+	id: string,
+	result: unknown,
+	isError: boolean,
+	partial: boolean,
+) {
 	const info = state.tools.get(id);
 	if (!info) return;
 	if (!partial) finalizeOutput(info, result);
@@ -248,7 +298,11 @@ function compactLines(info: ToolInfo, theme: Theme): string[] {
 			running: item.running,
 			durationMs: item.durationMs,
 		})),
-		{ cwd: state.cwd, width: Math.min(process.stdout.columns || 100, MAX_WIDTH), theme },
+		{
+			cwd: state.cwd,
+			width: Math.min(process.stdout.columns || 100, MAX_WIDTH),
+			theme,
+		},
 	);
 }
 
@@ -266,7 +320,11 @@ type RendererPatch = {
 
 function patchRenderer(owner: symbol) {
 	const proto = ToolExecutionComponent.prototype as any;
-	if (typeof proto.updateDisplay !== "function" || typeof proto.render !== "function") return;
+	if (
+		typeof proto.updateDisplay !== "function" ||
+		typeof proto.render !== "function"
+	)
+		return;
 	const prior = proto[PATCH_KEY] as RendererPatch | undefined;
 	const originalUpdateDisplay = proto.updateDisplay;
 	const originalRender = proto.render;
@@ -275,7 +333,13 @@ function patchRenderer(owner: symbol) {
 
 	const updateDisplay = function compactToolsUpdateDisplay(this: any) {
 		const category = categoryFor(this.toolName ?? "");
-		if (!state.enabled || !category || this.expanded || !this.toolCallId || !this.selfRenderContainer?.clear) {
+		if (
+			!state.enabled ||
+			!category ||
+			this.expanded ||
+			!this.toolCallId ||
+			!this.selfRenderContainer?.clear
+		) {
 			this.__compactToolsActive = false;
 			this.__compactToolsHidden = false;
 			return originalUpdateDisplay.call(this);
@@ -285,7 +349,12 @@ function patchRenderer(owner: symbol) {
 			this.invalidate?.();
 			this.ui?.requestRender?.();
 		};
-		const info = hydrate(this.toolCallId, this.toolName, this.args, this.result?.isError ?? false)!;
+		const info = hydrate(
+			this.toolCallId,
+			this.toolName,
+			this.args,
+			this.result?.isError ?? false,
+		)!;
 		info.args = this.args;
 		info.target = displayTarget(category, this.toolName, this.args, state.cwd);
 		info.invalidate = invalidate;
@@ -310,12 +379,23 @@ function patchRenderer(owner: symbol) {
 
 	const render = function compactToolsRender(this: any, width: number) {
 		if (this.hideComponent || this.__compactToolsHidden) return [];
-		if (this.__compactToolsActive) return this.selfRenderContainer.render(width);
+		if (this.__compactToolsActive)
+			return this.selfRenderContainer.render(width);
 		return originalRender.call(this, width);
 	};
 	proto.updateDisplay = updateDisplay;
 	proto.render = render;
-	proto[PATCH_KEY] = { owner, active: true, prior, originalUpdateDisplay, originalRender, rootUpdateDisplay, rootRender, updateDisplay, render } satisfies RendererPatch;
+	proto[PATCH_KEY] = {
+		owner,
+		active: true,
+		prior,
+		originalUpdateDisplay,
+		originalRender,
+		rootUpdateDisplay,
+		rootRender,
+		updateDisplay,
+		render,
+	} satisfies RendererPatch;
 }
 
 function restoreRendererPatch(owner: symbol) {
@@ -355,8 +435,15 @@ function refresh() {
 function restoreConfig(ctx: ExtensionContext) {
 	state.enabled = true;
 	for (const entry of ctx.sessionManager.getBranch()) {
-		const data = entry.type === "custom" ? entry.data as { enabled?: unknown } | undefined : undefined;
-		if (entry.type === "custom" && entry.customType === CONFIG_ENTRY && typeof data?.enabled === "boolean") {
+		const data =
+			entry.type === "custom"
+				? (entry.data as { enabled?: unknown } | undefined)
+				: undefined;
+		if (
+			entry.type === "custom" &&
+			entry.customType === CONFIG_ENTRY &&
+			typeof data?.enabled === "boolean"
+		) {
 			state.enabled = data.enabled;
 		}
 	}
@@ -385,32 +472,56 @@ export default function compactTools(pi: ExtensionAPI) {
 	setCompactToolRenderer(rendererApi);
 	patchRenderer(patchOwner);
 	pi.on("context", async (event, ctx) => {
-		const location = await artifactLocation(ctx.sessionManager.getSessionDir(), ctx.sessionManager.getSessionId());
+		const location = await artifactLocation(
+			ctx.sessionManager.getSessionDir(),
+			ctx.sessionManager.getSessionId(),
+		);
 		let artifacts: ToolResultArtifacts | undefined;
 		if (location) {
 			artifacts = artifactStores.get(location.directory);
 			if (!artifacts) {
-				artifacts = new ToolResultArtifacts(location.directory, { root: location.root });
+				artifacts = new ToolResultArtifacts(location.directory, {
+					root: location.root,
+				});
 				artifactStores.set(location.directory, artifacts);
 			}
 		}
 		const baseline = boundToolResultHistory(event.messages);
 		const pending = event.messages.flatMap((message, index) => {
 			const bounded = baseline[index] as { role?: string; content?: unknown[] };
-			if (message.role !== "toolResult" || !Array.isArray(message.content) || !Array.isArray(bounded?.content)) return [];
+			if (
+				message.role !== "toolResult" ||
+				!Array.isArray(message.content) ||
+				!Array.isArray(bounded?.content)
+			)
+				return [];
 			const text = providerText(message.content);
 			if (!text || text === providerText(bounded.content)) return [];
-			return [{ index, identity: `${index}\0${message.toolCallId ?? ""}`, text }];
+			return [
+				{ index, identity: `${index}\0${message.toolCallId ?? ""}`, text },
+			];
 		});
-		const persisted = artifacts && pending.length ? await artifacts.persistBatch(pending) : [];
-		const recovered = new Map(pending.flatMap((item, pendingIndex) => {
-			const artifact = persisted[pendingIndex];
-			return artifact ? [[item.index, { ...artifact, lines: item.text.split("\n").length }] as const] : [];
-		}));
+		const persisted =
+			artifacts && pending.length ? await artifacts.persistBatch(pending) : [];
+		const recovered = new Map(
+			pending.flatMap((item, pendingIndex) => {
+				const artifact = persisted[pendingIndex];
+				return artifact
+					? [
+							[
+								item.index,
+								{ ...artifact, lines: item.text.split("\n").length },
+							] as const,
+						]
+					: [];
+			}),
+		);
 		const recovery: RecoveryMarker = (_message, info, index) => {
 			const artifact = recovered.get(index);
 			if (!artifact) return undefined;
-			const nonText = info.omittedNonText ? ` nonText=${info.omittedNonText} omitted/not-persisted;` : "";
+			const nonText = info.omittedNonText
+				? ` nonText=${info.omittedNonText} omitted/not-persisted;`
+				: "";
 			return `\n\n[Output omitted from LLM context. Recovery id=${artifact.id} path=${artifact.path} sha256=${artifact.sha256} utf8Bytes=${artifact.bytes} lines=1-${artifact.lines} chars=${info.start}-${info.end} omitted=${info.omitted} chars total=${info.total};${nonText} use read/rg.]\n\n`;
 		};
 		return { messages: boundToolResultHistory(event.messages, recovery) };
@@ -430,7 +541,11 @@ export default function compactTools(pi: ExtensionAPI) {
 			onError: (error) => {
 				if (error.message.startsWith("Nothing to compact")) return;
 				contextCompactionArmed = true;
-				if (ctx.hasUI) ctx.ui.notify(`Automatic context compaction failed: ${error.message}`, "warning");
+				if (ctx.hasUI)
+					ctx.ui.notify(
+						`Automatic context compaction failed: ${error.message}`,
+						"warning",
+					);
 			},
 		});
 	});
@@ -444,7 +559,10 @@ export default function compactTools(pi: ExtensionAPI) {
 				return;
 			}
 			if (value && value !== "on" && value !== "off" && value !== "toggle") {
-				ctx.ui.notify("Usage: /compact-tools [on|off|toggle|status]", "warning");
+				ctx.ui.notify(
+					"Usage: /compact-tools [on|off|toggle|status]",
+					"warning",
+				);
 				return;
 			}
 			state.enabled = value === "on" || (value !== "off" && !state.enabled);
@@ -461,7 +579,8 @@ export default function compactTools(pi: ExtensionAPI) {
 	pi.on("session_shutdown", () => {
 		rendererApi[RENDERER_ACTIVE_KEY] = false;
 		restoreRendererPatch(patchOwner);
-		if (getCompactToolRenderer() === rendererApi) setCompactToolRenderer(activeRenderer(priorRenderer));
+		if (getCompactToolRenderer() === rendererApi)
+			setCompactToolRenderer(activeRenderer(priorRenderer));
 		state.components.clear();
 	});
 	pi.on("session_start", async (_event, ctx) => {
@@ -476,7 +595,11 @@ export default function compactTools(pi: ExtensionAPI) {
 		resetRun();
 	});
 	pi.on("message_update", (event) => {
-		if (event.assistantMessageEvent?.type === "text_delta" && event.assistantMessageEvent.delta?.trim()) state.group = [];
+		if (
+			event.assistantMessageEvent?.type === "text_delta" &&
+			event.assistantMessageEvent.delta?.trim()
+		)
+			state.group = [];
 	});
 	pi.on("tool_execution_start", (event, ctx) => {
 		capture(ctx);

@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import type { Task, TaskAction, TaskMutationParams, TaskReview, TaskStatus } from "../tool/types.js";
+import type {
+	Task,
+	TaskAction,
+	TaskMutationParams,
+	TaskReview,
+	TaskStatus,
+} from "../tool/types.js";
 import {
 	COMPLETION_REVIEW_MODEL,
 	COMPLETION_REVIEWER_ID,
@@ -44,13 +50,26 @@ function nextRevision(state: TaskState): number {
 function normalizeQuestions(value: string[] | undefined): string[] | undefined {
 	if (!value || value.length < 1 || value.length > 8) return undefined;
 	const questions = value.map((question) => question.trim());
-	return questions.every(Boolean) && new Set(questions).size === questions.length ? questions : undefined;
+	return questions.every(Boolean) &&
+		new Set(questions).size === questions.length
+		? questions
+		: undefined;
 }
 
-function normalizeCompletion(params: TaskMutationParams): { result: string; evidence: string[] } | undefined {
-	if (typeof params.result !== "string" || !Array.isArray(params.evidence) || params.evidence.length < 1 || params.evidence.length > 8) return undefined;
+function normalizeCompletion(
+	params: TaskMutationParams,
+): { result: string; evidence: string[] } | undefined {
+	if (
+		typeof params.result !== "string" ||
+		!Array.isArray(params.evidence) ||
+		params.evidence.length < 1 ||
+		params.evidence.length > 8
+	)
+		return undefined;
 	const result = params.result.trim();
-	const evidence = params.evidence.map((entry) => typeof entry === "string" ? entry.trim() : "");
+	const evidence = params.evidence.map((entry) =>
+		typeof entry === "string" ? entry.trim() : "",
+	);
 	return result && evidence.every(Boolean) ? { result, evidence } : undefined;
 }
 
@@ -60,7 +79,7 @@ function errorResult(state: TaskState, message: string): ApplyResult {
 
 function record(value: unknown): Record<string, unknown> | undefined {
 	return value && typeof value === "object" && !Array.isArray(value)
-		? value as Record<string, unknown>
+		? (value as Record<string, unknown>)
 		: undefined;
 }
 
@@ -69,13 +88,21 @@ function scopeChanged(
 	updated: Task,
 	params: TaskMutationParams,
 ): boolean {
-	if (params.subject !== undefined && current.subject !== updated.subject) return true;
-	if (params.description !== undefined && current.description !== updated.description) return true;
-	const dependencies = (task: Task) => [...new Set(task.blockedBy ?? [])].sort((a, b) => a - b);
-	if (!isDeepStrictEqual(dependencies(current), dependencies(updated))) return true;
+	if (params.subject !== undefined && current.subject !== updated.subject)
+		return true;
+	if (
+		params.description !== undefined &&
+		current.description !== updated.description
+	)
+		return true;
+	const dependencies = (task: Task) =>
+		[...new Set(task.blockedBy ?? [])].sort((a, b) => a - b);
+	if (!isDeepStrictEqual(dependencies(current), dependencies(updated)))
+		return true;
 	if (!params.metadata) return false;
-	return Object.keys(params.metadata).some((key) =>
-		!isDeepStrictEqual(current.metadata?.[key], updated.metadata?.[key]),
+	return Object.keys(params.metadata).some(
+		(key) =>
+			!isDeepStrictEqual(current.metadata?.[key], updated.metadata?.[key]),
 	);
 }
 
@@ -104,20 +131,25 @@ export interface CompletionReviewIdentity {
 	completionRevision: number;
 }
 
-function matchingPendingReview(task: Task | undefined, identity: CompletionReviewIdentity): task is Task & { review: TaskReview } {
+function matchingPendingReview(
+	task: Task | undefined,
+	identity: CompletionReviewIdentity,
+): task is Task & { review: TaskReview } {
 	return Boolean(
 		task?.review?.status === "pending" &&
-		task.id === identity.taskId &&
-		task.review.generation === identity.generation &&
-		task.review.token === identity.token &&
-		task.review.completionRevision === identity.completionRevision,
+			task.id === identity.taskId &&
+			task.review.generation === identity.generation &&
+			task.review.token === identity.token &&
+			task.review.completionRevision === identity.completionRevision,
 	);
 }
 
 function replaceTask(state: TaskState, task: Task): TaskState {
 	return {
 		...state,
-		tasks: state.tasks.map((candidate) => candidate.id === task.id ? task : candidate),
+		tasks: state.tasks.map((candidate) =>
+			candidate.id === task.id ? task : candidate,
+		),
 		revision: nextRevision(state),
 	};
 }
@@ -128,8 +160,14 @@ export function claimCompletionReview(
 	identity: CompletionReviewIdentity,
 	dispatchedAt = Date.now(),
 ): TaskState {
-	const task = state.tasks.find((candidate) => candidate.id === identity.taskId);
-	if (!matchingPendingReview(task, identity) || task.review.dispatchedAt !== undefined) return state;
+	const task = state.tasks.find(
+		(candidate) => candidate.id === identity.taskId,
+	);
+	if (
+		!matchingPendingReview(task, identity) ||
+		task.review.dispatchedAt !== undefined
+	)
+		return state;
 	return replaceTask(state, {
 		...task,
 		review: { ...task.review, dispatchedAt },
@@ -147,17 +185,22 @@ export function settleCompletionReview(
 		reviewedAt?: number;
 	},
 ): TaskState {
-	const task = state.tasks.find((candidate) => candidate.id === identity.taskId);
+	const task = state.tasks.find(
+		(candidate) => candidate.id === identity.taskId,
+	);
 	if (!matchingPendingReview(task, identity)) return state;
+	const feedback = result.feedback.trim().slice(0, 4_000);
+	const rejected = result.decision === "rejected";
 	return replaceTask(state, {
 		...task,
-		status: result.decision === "rejected" ? "in_progress" : task.status,
+		status: rejected ? "pending" : task.status,
+		...(rejected ? { wait: undefined } : {}),
 		review: {
 			...task.review,
 			status: result.decision,
 			reviewedAt: result.reviewedAt ?? Date.now(),
 			reviewer: { id: result.reviewerId, model: result.model },
-			feedback: result.feedback.trim().slice(0, 4_000),
+			feedback,
 		},
 	});
 }
@@ -168,7 +211,9 @@ export function failCompletionReview(
 	feedback: string,
 	failedAt = Date.now(),
 ): TaskState {
-	const task = state.tasks.find((candidate) => candidate.id === identity.taskId);
+	const task = state.tasks.find(
+		(candidate) => candidate.id === identity.taskId,
+	);
 	if (!matchingPendingReview(task, identity)) return state;
 	const attempts = (task.review.attempts ?? 0) + 1;
 	const exhausted = attempts >= MAX_COMPLETION_REVIEW_ATTEMPTS;
@@ -186,7 +231,17 @@ export function failCompletionReview(
 	if (exhausted) review.status = "rejected";
 	return replaceTask(state, {
 		...task,
-		status: exhausted ? "in_progress" : task.status,
+		status: exhausted ? "waiting:user" : task.status,
+		...(exhausted
+			? {
+					wait: {
+						kind: "user" as const,
+						questions: [
+							`Completion review for TODO #${task.id} failed repeatedly: ${review.feedback ?? "review unavailable"}. Choose whether to retry or revise evidence.`,
+						],
+					},
+				}
+			: {}),
 		review,
 	});
 }
@@ -212,7 +267,10 @@ export function applyTaskMutation(
 	switch (action) {
 		case "create": {
 			if (params.result !== undefined || params.evidence !== undefined) {
-				return errorResult(state, "result and evidence require status completed");
+				return errorResult(
+					state,
+					"result and evidence require status completed",
+				);
 			}
 			if (!params.subject?.trim()) {
 				return errorResult(state, "subject required for create");
@@ -220,8 +278,10 @@ export function applyTaskMutation(
 			if (params.blockedBy?.length) {
 				for (const dep of params.blockedBy) {
 					const depTask = state.tasks.find((t) => t.id === dep);
-					if (!depTask) return errorResult(state, `blockedBy: #${dep} not found`);
-					if (depTask.status === "deleted") return errorResult(state, `blockedBy: #${dep} is deleted`);
+					if (!depTask)
+						return errorResult(state, `blockedBy: #${dep} not found`);
+					if (depTask.status === "deleted")
+						return errorResult(state, `blockedBy: #${dep} is deleted`);
 				}
 			}
 			const newTask: Task = {
@@ -237,13 +297,19 @@ export function applyTaskMutation(
 
 			const newTasks = [...state.tasks, newTask];
 			return {
-				state: { ...state, tasks: newTasks, nextId: state.nextId + 1, revision: nextRevision(state) },
+				state: {
+					...state,
+					tasks: newTasks,
+					nextId: state.nextId + 1,
+					revision: nextRevision(state),
+				},
 				op: { kind: "create", taskId: newTask.id },
 			};
 		}
 
 		case "update": {
-			if (params.id === undefined) return errorResult(state, "id required for update");
+			if (params.id === undefined)
+				return errorResult(state, "id required for update");
 			const idx = state.tasks.findIndex((t) => t.id === params.id);
 			if (idx === -1) return errorResult(state, `#${params.id} not found`);
 			const current = state.tasks[idx];
@@ -263,33 +329,69 @@ export function applyTaskMutation(
 				params.timeoutSeconds !== undefined ||
 				(params.addBlockedBy && params.addBlockedBy.length > 0) ||
 				(params.removeBlockedBy && params.removeBlockedBy.length > 0);
-			if (!hasMutation) return errorResult(state, "update requires at least one mutable field");
+			if (!hasMutation)
+				return errorResult(state, "update requires at least one mutable field");
 
 			let newStatus = current.status;
 			if (params.status !== undefined) {
 				if (!isTransitionValid(current.status, params.status)) {
-					return errorResult(state, `illegal transition ${current.status} → ${params.status}`);
+					return errorResult(
+						state,
+						`illegal transition ${current.status} → ${params.status}`,
+					);
 				}
 				if (params.status === "completed" && current.wait?.kind === "jobs") {
-					return errorResult(state, "cannot complete while a jobs wait remains active");
+					return errorResult(
+						state,
+						"cannot complete while a jobs wait remains active",
+					);
 				}
 				newStatus = params.status;
 			}
 
-			const completing = current.status !== "completed" && newStatus === "completed";
-			if (newStatus !== "completed" && (params.result !== undefined || params.evidence !== undefined)) {
-				return errorResult(state, "result and evidence require status completed");
+			const completing =
+				current.status !== "completed" && newStatus === "completed";
+			if (
+				newStatus !== "completed" &&
+				(params.result !== undefined || params.evidence !== undefined)
+			) {
+				return errorResult(
+					state,
+					"result and evidence require status completed",
+				);
 			}
 			const completion = completing ? normalizeCompletion(params) : undefined;
 			if (completing && !completion) {
-				if (typeof params.result !== "string" || !params.result.trim()) return errorResult(state, "completed requires a non-empty result");
-				return errorResult(state, "completed requires at least one non-empty evidence entry");
+				if (typeof params.result !== "string" || !params.result.trim())
+					return errorResult(state, "completed requires a non-empty result");
+				return errorResult(
+					state,
+					"completed requires at least one non-empty evidence entry",
+				);
+			}
+			if (
+				completion &&
+				current.review?.status === "rejected" &&
+				completion.result === current.result &&
+				isDeepStrictEqual(completion.evidence, current.evidence)
+			) {
+				return errorResult(
+					state,
+					`completion evidence is unchanged since review rejection: ${current.review.feedback ?? "reviewer requested remediation"}`,
+				);
 			}
 
 			let wait = current.wait;
 			if (newStatus === "waiting:user") {
-				const questions = normalizeQuestions(params.questions ?? (wait?.kind === "user" ? wait.questions : undefined));
-				if (!questions) return errorResult(state, "waiting:user requires 1-8 unique non-empty questions");
+				const questions = normalizeQuestions(
+					params.questions ??
+						(wait?.kind === "user" ? wait.questions : undefined),
+				);
+				if (!questions)
+					return errorResult(
+						state,
+						"waiting:user requires 1-8 unique non-empty questions",
+					);
 				wait = { kind: "user", questions };
 			} else if (newStatus === "waiting:jobs") {
 				const previous = wait?.kind === "jobs" ? wait : undefined;
@@ -304,10 +406,21 @@ export function applyTaskMutation(
 					const jobIds = params.jobIds ?? previous?.jobIds;
 					const mode = params.jobMode ?? previous?.mode;
 					const timeoutSeconds = params.timeoutSeconds;
-					if (!jobIds?.length || new Set(jobIds).size !== jobIds.length || jobIds.some((id) => !id.trim())) {
-						return errorResult(state, "waiting:jobs requires unique non-empty jobIds");
+					if (
+						!jobIds?.length ||
+						new Set(jobIds).size !== jobIds.length ||
+						jobIds.some((id) => !id.trim())
+					) {
+						return errorResult(
+							state,
+							"waiting:jobs requires unique non-empty jobIds",
+						);
 					}
-					if (!mode) return errorResult(state, "waiting:jobs requires jobMode all or any");
+					if (!mode)
+						return errorResult(
+							state,
+							"waiting:jobs requires jobMode all or any",
+						);
 					if (
 						timeoutSeconds === undefined ||
 						!Number.isInteger(timeoutSeconds) ||
@@ -328,8 +441,16 @@ export function applyTaskMutation(
 					};
 				}
 			} else {
-				if (params.questions || params.jobIds || params.jobMode || params.timeoutSeconds !== undefined) {
-					return errorResult(state, "wait fields require status waiting:user or waiting:jobs");
+				if (
+					params.questions ||
+					params.jobIds ||
+					params.jobMode ||
+					params.timeoutSeconds !== undefined
+				) {
+					return errorResult(
+						state,
+						"wait fields require status waiting:user or waiting:jobs",
+					);
 				}
 				wait = undefined;
 			}
@@ -341,14 +462,20 @@ export function applyTaskMutation(
 			}
 			if (params.addBlockedBy?.length) {
 				for (const dep of params.addBlockedBy) {
-					if (dep === current.id) return errorResult(state, `cannot block #${current.id} on itself`);
+					if (dep === current.id)
+						return errorResult(state, `cannot block #${current.id} on itself`);
 					const depTask = state.tasks.find((t) => t.id === dep);
-					if (!depTask) return errorResult(state, `addBlockedBy: #${dep} not found`);
-					if (depTask.status === "deleted") return errorResult(state, `addBlockedBy: #${dep} is deleted`);
+					if (!depTask)
+						return errorResult(state, `addBlockedBy: #${dep} not found`);
+					if (depTask.status === "deleted")
+						return errorResult(state, `addBlockedBy: #${dep} is deleted`);
 					if (!newBlockedBy.includes(dep)) newBlockedBy.push(dep);
 				}
 				if (detectCycle(state.tasks, current.id, newBlockedBy)) {
-					return errorResult(state, "addBlockedBy would create a cycle in the blockedBy graph");
+					return errorResult(
+						state,
+						"addBlockedBy would create a cycle in the blockedBy graph",
+					);
 				}
 			}
 
@@ -364,8 +491,10 @@ export function applyTaskMutation(
 
 			const updated: Task = { ...current, status: newStatus };
 			if (params.subject !== undefined) updated.subject = params.subject;
-			if (params.description !== undefined) updated.description = params.description;
-			if (params.activeForm !== undefined) updated.activeForm = params.activeForm;
+			if (params.description !== undefined)
+				updated.description = params.description;
+			if (params.activeForm !== undefined)
+				updated.activeForm = params.activeForm;
 			if (params.owner !== undefined) updated.owner = params.owner;
 			if (newBlockedBy.length) updated.blockedBy = newBlockedBy;
 			else delete updated.blockedBy;
@@ -383,13 +512,20 @@ export function applyTaskMutation(
 					token: createToken(),
 					completionRevision,
 					requestedAt: now,
-					reviewer: { id: COMPLETION_REVIEWER_ID, model: COMPLETION_REVIEW_MODEL },
+					reviewer: {
+						id: COMPLETION_REVIEWER_ID,
+						model: COMPLETION_REVIEW_MODEL,
+					},
 				};
-			} else if (newStatus !== "completed" && current.review?.status !== "rejected") {
+			} else if (
+				newStatus !== "completed" &&
+				current.review?.status !== "rejected"
+			) {
 				delete updated.result;
 				delete updated.evidence;
 			}
-			if (newStatus === "waiting:user" || newStatus === "waiting:jobs") delete updated.waitEvidence;
+			if (newStatus === "waiting:user" || newStatus === "waiting:jobs")
+				delete updated.waitEvidence;
 			if (scopeChanged(current, updated, params)) {
 				rotateIncarnation(state, current, updated, createToken);
 				// An already-completed task can have its subject/description/blockedBy/
@@ -403,7 +539,10 @@ export function applyTaskMutation(
 						token: createToken(),
 						completionRevision: nextRevision(state),
 						requestedAt: now,
-						reviewer: { id: COMPLETION_REVIEWER_ID, model: COMPLETION_REVIEW_MODEL },
+						reviewer: {
+							id: COMPLETION_REVIEWER_ID,
+							model: COMPLETION_REVIEW_MODEL,
+						},
 					};
 				}
 			}
@@ -411,14 +550,24 @@ export function applyTaskMutation(
 			if (isDeepStrictEqual(updated, current)) {
 				return {
 					state,
-					op: { kind: "update", id: current.id, fromStatus: current.status, toStatus: current.status },
+					op: {
+						kind: "update",
+						id: current.id,
+						fromStatus: current.status,
+						toStatus: current.status,
+					},
 				};
 			}
 			const newTasks = [...state.tasks];
 			newTasks[idx] = updated;
 			return {
 				state: { ...state, tasks: newTasks, revision: nextRevision(state) },
-				op: { kind: "update", id: updated.id, fromStatus: current.status, toStatus: newStatus },
+				op: {
+					kind: "update",
+					id: updated.id,
+					fromStatus: current.status,
+					toStatus: newStatus,
+				},
 			};
 		}
 
@@ -428,24 +577,29 @@ export function applyTaskMutation(
 				op: {
 					kind: "list",
 					includeDeleted: params.includeDeleted === true,
-					...(params.status !== undefined ? { statusFilter: params.status } : {}),
+					...(params.status !== undefined
+						? { statusFilter: params.status }
+						: {}),
 				},
 			};
 		}
 
 		case "get": {
-			if (params.id === undefined) return errorResult(state, "id required for get");
+			if (params.id === undefined)
+				return errorResult(state, "id required for get");
 			const task = state.tasks.find((t) => t.id === params.id);
 			if (!task) return errorResult(state, `#${params.id} not found`);
 			return { state, op: { kind: "get", task } };
 		}
 
 		case "delete": {
-			if (params.id === undefined) return errorResult(state, "id required for delete");
+			if (params.id === undefined)
+				return errorResult(state, "id required for delete");
 			const idx = state.tasks.findIndex((t) => t.id === params.id);
 			if (idx === -1) return errorResult(state, `#${params.id} not found`);
 			const current = state.tasks[idx];
-			if (current.status === "deleted") return errorResult(state, `#${current.id} is already deleted`);
+			if (current.status === "deleted")
+				return errorResult(state, `#${current.id} is already deleted`);
 			if (!isTaskArchivable(current)) {
 				return errorResult(
 					state,
@@ -467,7 +621,10 @@ export function applyTaskMutation(
 				(task) => task.status !== "deleted" && !isTaskArchivable(task),
 			);
 			if (unresolved.length > 0) {
-				return errorResult(state, `clear requires all visible tasks completed with owned work settled; unresolved: ${unresolved.map((task) => `#${task.id}`).join(", ")}`);
+				return errorResult(
+					state,
+					`clear requires all visible tasks completed with owned work settled; unresolved: ${unresolved.map((task) => `#${task.id}`).join(", ")}`,
+				);
 			}
 			const count = state.tasks.filter(isTaskArchivable).length;
 			if (count === 0) return { state, op: { kind: "clear", count } };

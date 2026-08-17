@@ -32,7 +32,8 @@ test("Pi references preserve exact local routing and selector rejection", () => 
   const whatsNext = root("skills/whats-next/references/harnesses.md");
 
   assert.match(orchestrator, /subagent_spawn/);
-  assert.match(orchestrator, /Luna low\/medium/);
+  assert.match(orchestrator, /Model: use Luna/);
+  assert.match(orchestrator, /Effort: choose independently/);
   assert.match(ultrathink, /Terra low/);
   assert.match(whatsNext, /tool-free Terra child/);
   for (const reference of [orchestrator, ultrathink, whatsNext]) {
