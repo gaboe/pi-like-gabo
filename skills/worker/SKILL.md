@@ -21,6 +21,9 @@ unchanged. This skill owns the other half: what a worker must hand back, and how
 Mechanics live in the `herdr` skill and in `herdr agent --help`. Read those for pane and agent
 commands rather than a copy here.
 
+The bar: every claim you pass to the user carries a receipt you re-ran yourself, and every number in
+it was measured at the moment you wrote it.
+
 ## Profiles
 
 `luna` — Codex at high reasoning. The default and, so far, the only profile worth the pane:
@@ -84,39 +87,9 @@ When a gate goes green on a change you expected to be hard, look closer.
 
 ## The work record
 
-Require one short markdown file per task, in a directory the repo already ignores, named
-`<date>-<slug>.md`. Fixed headings, terse, under a screen. You read one file instead of running six
-commands, and the reasoning behind a decision outlives the chat log:
-
-```markdown
-# <task>     <commit sha | staged: <paths> | uncommitted>
-
-## Did
-- one line per change, with the file it touched
-
-## Verified
-- <claim> — `<command>` → <decisive output line>
-
-## Not verified
-- <what, and what it would take>
-
-## Numbers
-- <figure> — `<command that measured it>`
-
-## Decided
-- <choice> over <alternative>, because <reason>
-
-## Blocked
-- <what needs the real world, a human, or another decision>
-```
-
-Every Verified line carries its command; a claim without one belongs under Not verified. **Not
-verified always has content** — it is the highest-value section and the first a worker drops.
-Decided carries the rejected alternative, or the decision reopens in a month. The header states
-staged versus committed, because a change held back pending a real-world test is a different thing
-from one that landed and a reader cannot tell from the diff.
-
-The record says where to look. It is not itself evidence.
+Seeding a worker means requiring its work record: read
+[`work-record.md`](work-record.md) for the headings and the rules behind them. Every task hands one
+back, or you are reconstructing state by hand next round.
 
 ## Shared tree
 
@@ -169,4 +142,4 @@ share is a file: overlapping scopes in one tree produce two workers reverting ea
 one an explicit set of paths and keep those sets disjoint. Where they cannot be, sequence the work
 instead of parallelising it.
 
-Close the panes and agents you created once their work is done. Leave alone the ones you did not.
+Close the panes and agents you created once their work is done.
