@@ -15,6 +15,7 @@ import type {
 	Theme,
 } from "@earendil-works/pi-coding-agent";
 import { type TUI, truncateToWidth } from "@earendil-works/pi-tui";
+import { isTaskArchivable } from "./state/completion.js";
 import { formatStatusLabel, t } from "./state/i18n-bridge.js";
 import {
 	selectHasActive,
@@ -106,7 +107,7 @@ export class TodoOverlay {
 
 	hideAllCompletedTasks(): void {
 		for (const task of getState().tasks) {
-			if (task.status === "completed") this.hiddenCompletedTaskIds.add(task.id);
+			if (isTaskArchivable(task)) this.hiddenCompletedTaskIds.add(task.id);
 		}
 		this.completedTaskIdsPendingHide.clear();
 		this.update();
@@ -119,9 +120,7 @@ export class TodoOverlay {
 		}
 		this.lastNextId = state.nextId;
 		const completedTaskIds = new Set(
-			state.tasks
-				.filter((task) => task.status === "completed")
-				.map((task) => task.id),
+			state.tasks.filter(isTaskArchivable).map((task) => task.id),
 		);
 		for (const taskId of this.completedTaskIdsPendingHide) {
 			if (!completedTaskIds.has(taskId))
@@ -144,9 +143,7 @@ export class TodoOverlay {
 	private shouldHideCompletedTask(
 		task: ReturnType<TodoOverlay["getSnapshot"]>["tasks"][number],
 	): boolean {
-		return (
-			task.status === "completed" && this.hiddenCompletedTaskIds.has(task.id)
-		);
+		return isTaskArchivable(task) && this.hiddenCompletedTaskIds.has(task.id);
 	}
 
 	private renderWidget(theme: Theme, width: number): string[] {
@@ -185,7 +182,7 @@ export class TodoOverlay {
 		const newlyDisplayedCompletedTaskIds = overlayTasks
 			.filter(
 				(task) =>
-					task.status === "completed" &&
+					isTaskArchivable(task) &&
 					!this.completedTaskIdsPendingHide.has(task.id) &&
 					!this.hiddenCompletedTaskIds.has(task.id),
 			)

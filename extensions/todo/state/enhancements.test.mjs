@@ -1894,9 +1894,17 @@ Recommendation: implement external DTO guards.`;
 		adapter.dispose();
 	});
 
-	it("dispatches one independent review before steering the agent to clear", async () => {
+	it("dispatches one independent review from the prepared analysis root before steering the agent to clear", async () => {
 		__resetState();
-		commitState({ tasks: [task(1, "in_progress")], nextId: 2, revision: 1 });
+		commitState({
+			tasks: [
+				task(1, "in_progress", {
+					metadata: { preparation: { analysisCwd: process.cwd() } },
+				}),
+			],
+			nextId: 2,
+			revision: 1,
+		});
 		const bus = new Bus();
 		const adapter = new JobsAdapter(bus);
 		const sent = [];
@@ -1928,7 +1936,7 @@ Recommendation: implement external DTO guards.`;
 		);
 		try {
 			scheduler.activate({
-				cwd: process.cwd(),
+				cwd: "/fallback/project",
 				isProjectTrusted: () => true,
 				modelRegistry: {},
 			});
@@ -1950,12 +1958,21 @@ Recommendation: implement external DTO guards.`;
 
 			assert.equal(requests.length, 1);
 			assert.equal(requests[0].model, "openai-codex/gpt-5.6-luna");
+			assert.equal(requests[0].cwd, process.cwd());
 			assert.deepEqual(requests[0].allowedTools, []);
 			assert.match(requests[0].prompt, /Task 1/);
 			assert.match(requests[0].prompt, /done/);
 			assert.match(requests[0].prompt, /verified/);
 			assert.match(requests[0].prompt, /Mermaid diagram or GitHub links/);
 			assert.match(requests[0].prompt, /current git diff/i);
+			assert.match(
+				requests[0].prompt,
+				/research, analysis, investigation, or drafting work, an empty diff is expected/i,
+			);
+			assert.match(
+				requests[0].prompt,
+				/evidence identifies concrete sources, commands, excerpts, or links/i,
+			);
 			assert.equal(getState().tasks[0].review.status, "approved");
 			assert.equal(hasCompletedBatch(), true);
 			assert.equal(sent.length, 1);

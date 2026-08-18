@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { isAbsolute } from "node:path";
 import { promisify } from "node:util";
 import type {
 	ExtensionAPI,
@@ -18,6 +19,7 @@ import {
 	createTodoSnapshot,
 	TODO_SNAPSHOT_TYPE,
 } from "./state/replay.js";
+import type { TaskState } from "./state/state.js";
 import { commitState, getState } from "./state/store.js";
 import {
 	applyJobState,
@@ -107,8 +109,24 @@ async function boundedGitDiff(cwd: string): Promise<string> {
 	}
 }
 
+export function completionReviewCwd(task: Task, fallback: string): string {
+	const preparation = task.metadata?.preparation;
+	if (!preparation || typeof preparation !== "object") return fallback;
+	const analysisCwd = (preparation as { analysisCwd?: unknown }).analysisCwd;
+	return typeof analysisCwd === "string" && isAbsolute(analysisCwd)
+		? analysisCwd
+		: fallback;
+}
+
 export function completionReviewPrompt(task: Task, diff: string): string {
-	return `Independently review completion of TODO #${task.id}. Judge only whether implementation and evidence satisfy original TODO. Reject concrete gaps; do not perform implementation. For example, reject a documentation TODO that requested a Mermaid diagram or GitHub links when the reported result or diff omits them, even if other edits are correct.
+	return `Independently review completion of TODO #${task.id}. Judge only whether the result and evidence satisfy the original TODO. Reject concrete gaps; do not perform implementation.
+
+Classify the TODO from its original request before using the diff:
+- For implementation or file-editing work, require the claimed change and focused verification to be supported by the evidence and diff.
+- For research, analysis, investigation, or drafting work, an empty diff is expected and is not a rejection reason. Judge whether the evidence identifies concrete sources, commands, excerpts, or links and answers every requested question.
+- Treat unrelated pre-existing diff content as neither proof nor a defect.
+
+For example, reject a documentation TODO that requested a Mermaid diagram or GitHub links when the reported result or diff omits them, even if other edits are correct.
 
 Original TODO subject:
 ${task.subject}
@@ -191,6 +209,15 @@ Keep detail proportional to the change, but preserve enough implementation conte
 export function hasCompletedBatch(state = getState()): boolean {
 	const visible = state.tasks.filter((task) => task.status !== "deleted");
 	return visible.length > 0 && visible.every(isTaskArchivable);
+}
+
+export function yieldInProgressTasks(state: TaskState): TaskState {
+	const tasks = state.tasks.map((task) =>
+		task.status === "in_progress" ? { ...task, status: "pending" as const } : task,
+	);
+	return tasks.some((task, index) => task !== state.tasks[index])
+		? { ...state, tasks, revision: state.revision + 1 }
+		: state;
 }
 
 function taskContinuation(
@@ -795,6 +822,16 @@ export class TodoScheduler {
 		this.completionReviewPending = false;
 	}
 
+	interruptForUserWork(): void {
+		this.pauseAutomation();
+		const current = getState();
+		const yielded = yieldInProgressTasks(current);
+		if (yielded === current) return;
+		persistTodoSnapshot(this.pi, yielded);
+		commitState(yielded);
+		this.onStateChanged();
+	}
+
 	resumeAutomation(): void {
 		this.automationPaused = false;
 		const resumed = resumeWaitingUserTasks(getState());
@@ -979,9 +1016,10 @@ export class TodoScheduler {
 		try {
 			const service = getBackgroundSubagentService();
 			if (!service) throw new Error("Background subagent service unavailable");
+			const reviewCwd = completionReviewCwd(task, ctx.cwd);
 			const result = await service.run({
 				title: `TODO #${task.id} completion review`,
-				cwd: ctx.cwd,
+				cwd: reviewCwd,
 				model: COMPLETION_REVIEW_MODEL,
 				reasoningEffort: "low",
 				maxTurns: 4,
@@ -997,7 +1035,7 @@ export class TodoScheduler {
 					inheritedThinkingLevel: "low",
 					modelRegistry: ctx.modelRegistry,
 				},
-				prompt: completionReviewPrompt(task, await boundedGitDiff(ctx.cwd)),
+				prompt: completionReviewPrompt(task, await boundedGitDiff(reviewCwd)),
 			});
 			if (result.status !== "done")
 				throw new Error(result.error ?? "Review worker failed");

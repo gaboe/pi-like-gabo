@@ -89,6 +89,33 @@ test("TODO hygiene hides completed tasks while retaining audit state", () => {
 	overlay.dispose();
 });
 
+test("TODO overlay keeps completion visible until independent review approves it", () => {
+	let widget;
+	const overlay = new TodoOverlay();
+	overlay.setUICtx({
+		setWidget(_key, content) {
+			widget = content;
+		},
+	});
+	replaceState({
+		tasks: [
+			{
+				id: 1,
+				subject: "await review",
+				status: "completed",
+				review: { status: "pending" },
+			},
+		],
+		nextId: 2,
+		revision: 1,
+	});
+	overlay.hideAllCompletedTasks();
+	assert.equal(typeof widget, "function");
+	const component = widget({ requestRender() {} }, theme);
+	assert.match(component.render(120).join("\n"), /◐ await review \(reviewing completion\)/);
+	overlay.dispose();
+});
+
 test("TODO overlay shows queued automatic continuation", () => {
 	let widget;
 	const overlay = new TodoOverlay(() => true);

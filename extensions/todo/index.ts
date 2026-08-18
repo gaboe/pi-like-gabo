@@ -57,6 +57,11 @@ function isStaleCtxError(e: unknown): boolean {
 	return /stale after session replacement/.test(String(e));
 }
 
+export function interruptsTodoAutomation(text: string): boolean {
+	return /(?:^|\s)(?:\/skill:|\$)pi-like-gabo-reflect(?:\s|$)/i.test(text)
+		|| /<skill\s+name=["']pi-like-gabo-reflect["']/i.test(text);
+}
+
 export default function (pi: ExtensionAPI) {
 	// Todo overlay widget — constructed lazily at the first session_start with UI.
 	let todoOverlay: TodoOverlay | undefined;
@@ -262,8 +267,12 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("input", async (event) => {
-		if (event.source === "interactive" || event.source === "rpc")
-			scheduler.resumeAutomation();
+		if (event.source !== "interactive" && event.source !== "rpc") return;
+		if (interruptsTodoAutomation(event.text)) {
+			scheduler.interruptForUserWork();
+			return;
+		}
+		scheduler.resumeAutomation();
 	});
 
 	pi.on("agent_start", async () => {

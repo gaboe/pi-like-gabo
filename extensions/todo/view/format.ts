@@ -112,19 +112,24 @@ export function formatOverlayTaskLine(
   showId: boolean,
 ): string {
   const preparation = formatPreparationProgress(t);
-  const glyph = preparation
+  const reviewingCompletion =
+    t.status === "completed" && t.review !== undefined && t.review.status !== "approved";
+  const glyph = preparation || reviewingCompletion
     ? theme.fg("warning", "◐")
     : overlayStatusGlyph(t.status, theme);
-  const subjectColor =
-    t.status === "completed" || t.status === "deleted" ? "dim" : "text";
+  const terminal =
+    (t.status === "completed" && !reviewingCompletion) || t.status === "deleted";
+  const subjectColor = terminal ? "dim" : "text";
   let subject = theme.fg(subjectColor, t.subject);
-  if (t.status === "completed" || t.status === "deleted") {
+  if (terminal) {
     subject = theme.strikethrough(subject);
   }
   let line = `${glyph}`;
   if (showId) line += ` ${theme.fg("accent", `#${t.id}`)}`;
   line += ` ${subject}`;
-  if (t.status === "in_progress" && t.activeForm) {
+  if (reviewingCompletion) {
+    line += ` ${theme.fg("dim", "(reviewing completion)")}`;
+  } else if (t.status === "in_progress" && t.activeForm) {
     line += ` ${theme.fg("dim", `(${t.activeForm})`)}`;
   } else if (preparation) {
     line += ` ${theme.fg("dim", `(${preparation})`)}`;
@@ -145,9 +150,12 @@ export function formatOverlayTaskLine(
  */
 export function formatCommandTaskLine(t: Task, glyph: string): string {
   const preparation = formatPreparationProgress(t);
-  if (preparation) glyph = "◐";
-  const form =
-    t.status === "in_progress" && t.activeForm
+  const reviewingCompletion =
+    t.status === "completed" && t.review !== undefined && t.review.status !== "approved";
+  if (preparation || reviewingCompletion) glyph = "◐";
+  const form = reviewingCompletion
+    ? " (reviewing completion)"
+    : t.status === "in_progress" && t.activeForm
       ? ` (${t.activeForm})`
       : preparation
         ? ` (${preparation})`

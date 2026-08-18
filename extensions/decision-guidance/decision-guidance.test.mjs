@@ -33,4 +33,8 @@ test("adds evidence-rich code and review decision guidance to every agent turn",
 	assert.match(result.systemPrompt, /evidence is missing, label it unavailable/);
 	assert.match(result.systemPrompt, /never fabricate evidence, sources, comments, or code/);
 	assert.match(result.systemPrompt, /decisions with no relevant code, omit this packet/);
+	assert.match(result.systemPrompt, /use grep instead of rg and find instead of fd/);
+	assert.match(result.systemPrompt, /only valid nested names are read, grep, find, ls, and bash/);
+	assert.match(result.systemPrompt, /standalone content search on rg/);
+	assert.match(result.systemPrompt, /standalone file discovery on fd/);
 });

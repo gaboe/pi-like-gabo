@@ -610,7 +610,10 @@ test("ask_user balances Herdr blocked state around interactive wait", async () =
           return new Promise((resolve) => {
             const component = factory(
               { requestRender() {}, terminal: { rows: 30, columns: 80 } },
-              { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+              {
+                fg: (_color: string, text: string) => text,
+                bold: (text: string) => text,
+              },
               {},
               resolve,
             );
@@ -647,7 +650,10 @@ test("ask_user clears Herdr blocked state when the UI rejects", async () => {
       { question: "Choose?", options: [{ label: "Yes" }, { label: "No" }] },
       undefined,
       undefined,
-      { mode: "tui", ui: { custom: () => Promise.reject(new Error("UI closed")) } },
+      {
+        mode: "tui",
+        ui: { custom: () => Promise.reject(new Error("UI closed")) },
+      },
     ),
     /UI closed/,
   );
@@ -672,7 +678,11 @@ test("ask_user balances blocked state across timeout abort and retry", async () 
     { name: "AbortError" },
   );
   assert.equal(
-    await askUserWithHerdrBlocked(eventBus as never, "Choose?", async () => "retry"),
+    await askUserWithHerdrBlocked(
+      eventBus as never,
+      "Choose?",
+      async () => "retry",
+    ),
     "retry",
   );
   assert.deepEqual(events, [
@@ -1048,7 +1058,7 @@ test("custom explanation captures clarification without selecting a decision", a
   assert.match(result.content[0].text, /Why is this safer\?/);
 });
 
-test("interactive details preserve decision keys and scroll within terminal height", async () => {
+test("interactive details scroll with package-only Ctrl+U/Ctrl+D keys", async () => {
   let tool: any;
   askUser({
     registerTool(definition: unknown) {
@@ -1082,7 +1092,11 @@ test("interactive details preserve decision keys and scroll within terminal heig
               resolve,
             );
             renders.push(component.render(80));
-            component.handleInput("\x1b[6~");
+            component.handleInput("\x04");
+            renders.push(component.render(80));
+            component.handleInput("\x04");
+            renders.push(component.render(80));
+            component.handleInput("\x15");
             renders.push(component.render(80));
             component.handleInput("\x1b[B");
             renders.push(component.render(80));
@@ -1096,7 +1110,9 @@ test("interactive details preserve decision keys and scroll within terminal heig
   assert.match(renders[0].join("\n"), /Decision details/);
   assert.match(renders[0].join("\n"), /1-/);
   assert.notEqual(renders[0].join("\n"), renders[1].join("\n"));
-  assert.ok(renders.every((lines) => lines.length <= terminal.rows));
+  assert.notEqual(renders[1].join("\n"), renders[2].join("\n"));
+  assert.equal(renders[1].join("\n"), renders[3].join("\n"));
+  assert.ok(renders.every((lines) => lines.length <= terminal.rows - 3));
   assert.equal(result.details.answer, "No");
 });
 

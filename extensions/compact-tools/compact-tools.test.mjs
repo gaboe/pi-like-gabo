@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	categoryFor,
 	commandDisplay,
@@ -10,7 +13,12 @@ import {
 	errorPreview,
 	resultSummary,
 } from "./format.ts";
-import { compactionThresholds } from "./index.ts";
+import {
+	compactionThresholds,
+	normalizeBatchCalls,
+	registerToolBatch,
+	TOOL_BATCH_PARAMETERS,
+} from "./index.ts";
 
 const cwd = "/tmp/worktrees/feature";
 
@@ -23,6 +31,54 @@ test("compacts before summarization approaches the model context limit", () => {
 		compactAt: 100_000,
 		rearmAt: 80_000,
 	});
+});
+
+test("tool_batch schema accepts and normalizes rg/fd compatibility aliases", () => {
+	assert.ok(TOOL_BATCH_PARAMETERS.properties.calls.items.properties.tool.enum.includes("rg"));
+	assert.ok(TOOL_BATCH_PARAMETERS.properties.calls.items.properties.tool.enum.includes("fd"));
+	assert.deepEqual(
+		normalizeBatchCalls([
+			{ tool: "rg", args: { pattern: "needle", path: "src", fixed_strings: true } },
+			{ tool: "fd", args: { pattern: "test", path: "src", limit: 20 } },
+			{ tool: "edit", args: { path: "src/a.ts" } },
+		]),
+		[
+			{ tool: "grep", args: { pattern: "needle", path: "src", literal: true } },
+			{ tool: "find", args: { pattern: "*test*", path: "src", limit: 20 } },
+		],
+	);
+});
+
+test("tool_batch registration leaves standalone rg/fd definitions untouched", () => {
+	const standaloneRg = { name: "rg", execute: Symbol("rg") };
+	const standaloneFd = { name: "fd", execute: Symbol("fd") };
+	const registry = new Map([["rg", standaloneRg], ["fd", standaloneFd]]);
+	registerToolBatch({ registerTool(tool) { registry.set(tool.name, tool); } }, cwd);
+	assert.equal(registry.get("rg"), standaloneRg);
+	assert.equal(registry.get("fd"), standaloneFd);
+	assert.equal(registry.get("tool_batch").name, "tool_batch");
+	assert.deepEqual([...registry.keys()], ["rg", "fd", "tool_batch"]);
+});
+
+test("tool_batch executes rg/fd aliases through grep/find", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "tool-batch-aliases-"));
+	await writeFile(join(directory, "sample.test.ts"), "const needle = true;\n");
+	let definition;
+	registerToolBatch({ registerTool(tool) { definition = tool; } }, directory);
+	const result = await definition.execute(
+		"call",
+		{
+			calls: [
+				{ tool: "rg", args: { pattern: "needle", path: directory } },
+				{ tool: "fd", args: { pattern: "test", path: directory } },
+			],
+		},
+		undefined,
+	);
+	const text = result.content[0].text;
+	assert.match(text, /1\. grep/);
+	assert.match(text, /sample\.test\.ts/);
+	assert.match(text, /2\. find/);
 });
 
 test("categorizes general tools without taking edit rendering", () => {

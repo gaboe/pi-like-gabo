@@ -10,7 +10,9 @@ export const DECISION_GUIDANCE = `For code or review decisions with relevant cod
 
 Write prose by default. Present options only when user explicitly asks for options. If evidence is missing, label it unavailable; never fabricate evidence, sources, comments, or code. For decisions with no relevant code, omit this packet and keep simple decisions concise.
 
-Never treat a recommendation as user approval.`;
+Never treat a recommendation as user approval.
+
+Before emitting tool_batch, normalize nested tool names: use grep instead of rg and find instead of fd. The only valid nested names are read, grep, find, ls, and bash. Keep standalone content search on rg and standalone file discovery on fd; this rule applies only inside tool_batch.`;
 
 export default function decisionGuidance(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", (event) => ({

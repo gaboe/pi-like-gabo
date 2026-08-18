@@ -531,7 +531,7 @@ export function renderAskUserLayout(options: {
         ? `↑↓ move • Space or 1-${allOptions.length} toggle • Enter ${params.multiSelect ? "confirm" : "explain"} • Esc ${params.multiSelect ? "dismiss" : "back"}`
         : `↑↓ or 1-${allOptions.length} select • Enter confirm • Esc dismiss`;
     const hint = maxScroll
-      ? `${navigationHint} • PgUp/PgDn scroll`
+      ? `${navigationHint} • Ctrl+U/Ctrl+D scroll`
       : navigationHint;
 
     if (width < 24) {
@@ -928,6 +928,10 @@ export default function askUser(
             tui.requestRender();
           }
 
+          function detailsViewportHeight() {
+            return Math.max(8, Math.floor((tui.terminal.rows * 4) / 5) - 2);
+          }
+
           function selectOption(index: number) {
             const selected = allOptions[index];
             if (selected.isExplanation) {
@@ -1025,13 +1029,16 @@ export default function askUser(
               return;
             }
 
-            const pageSize = Math.max(1, tui.terminal.rows - 10);
-            if (matchesKey(data, Key.pageUp)) {
+            const pageSize = Math.max(
+              1,
+              Math.floor((detailsViewportHeight() - 1) / 2),
+            );
+            if (matchesKey(data, Key.ctrl("u"))) {
               scrollOffset = Math.max(0, scrollOffset - pageSize);
               refresh();
               return;
             }
-            if (matchesKey(data, Key.pageDown)) {
+            if (matchesKey(data, Key.ctrl("d"))) {
               scrollOffset += pageSize;
               refresh();
               return;
@@ -1172,7 +1179,7 @@ export default function askUser(
               editMode,
               expanded,
               scrollOffset,
-              viewportHeight: Math.max(6, rows - 8),
+              viewportHeight: detailsViewportHeight(),
               width,
               theme,
               markdownTheme,
@@ -1196,7 +1203,7 @@ export default function askUser(
               uiSignal.removeEventListener("abort", cancel);
             },
           };
-          });
+        });
       const showBlockedQuestion = (uiSignal: AbortSignal) =>
         askUserWithHerdrBlocked(pi.events, params.question, () =>
           showQuestion(uiSignal),

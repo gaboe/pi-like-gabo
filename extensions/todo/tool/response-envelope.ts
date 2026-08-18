@@ -158,6 +158,10 @@ export function formatContent(op: Op, state: TaskState): string {
       return `Created #${t.id}: ${t.subject} (pending)`;
     }
     case "update": {
+      const task = state.tasks.find((candidate) => candidate.id === op.id);
+      if (op.toStatus === "completed" && task?.review?.status === "pending") {
+        return `Submitted #${op.id} completion evidence for independent review`;
+      }
       const transition =
         op.fromStatus !== op.toStatus
           ? ` (${op.fromStatus} → ${op.toStatus})`

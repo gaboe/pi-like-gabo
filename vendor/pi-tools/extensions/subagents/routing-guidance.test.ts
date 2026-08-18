@@ -17,9 +17,18 @@ for (const [name, guidance] of [
   test(`${name} uses lean explicit model and effort routing`, () => {
     const text = guidance.join("\n");
     assert.match(text, /model and (?:reasoning_)?effort independently/);
-    assert.match(text, /Luna for focused scouts\/verifiers, broad exploration, and precisely scoped low-risk implementation/);
-    assert.match(text, /Luna effort low for mechanical work, medium for multi-step reasoning, or high only when bounded work is genuinely difficult/);
-    assert.match(text, /Terra low for ambiguous root causes, domain decisions, or broad\/coupled multi-file implementation/);
+    assert.match(
+      text,
+      /Luna for focused scouts\/verifiers, broad exploration, and precisely scoped low-risk implementation/,
+    );
+    assert.match(
+      text,
+      /Luna effort low for mechanical work, medium for multi-step reasoning, or high only when bounded work is genuinely difficult/,
+    );
+    assert.match(
+      text,
+      /Terra low for ambiguous root causes, domain decisions, or broad\/coupled multi-file implementation/,
+    );
     assert.match(text, /Sol low for routine review/);
     assert.match(text, /Sol medium for planning or complex synthesis/);
     assert.match(text, /xhigh only for genuinely difficult problems/);
@@ -29,9 +38,15 @@ for (const [name, guidance] of [
 
 test("workflow tool description matches effort-aware Luna routing", () => {
   const text = WORKFLOW_TOOL_DESCRIPTION;
-  assert.match(text, /Route bounded low-risk read-only work or precisely scoped implementation/);
+  assert.match(
+    text,
+    /Route bounded low-risk read-only work or precisely scoped implementation/,
+  );
   assert.match(text, /Choose effort independently by reasoning depth/);
-  assert.match(text, /a failed check stays at the same tier unless it exposes missing reasoning or scope ambiguity/);
+  assert.match(
+    text,
+    /a failed check stays at the same tier unless it exposes missing reasoning or scope ambiguity/,
+  );
   assert.doesNotMatch(text, /at most 4 tool-capable work turns/);
   assert.doesNotMatch(text, /touch at most 3 files/);
 });

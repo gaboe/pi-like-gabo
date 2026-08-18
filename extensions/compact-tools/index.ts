@@ -3,7 +3,14 @@ import type {
 	ExtensionContext,
 	Theme,
 } from "@earendil-works/pi-coding-agent";
-import { ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
+import {
+	createBashTool,
+	createFindTool,
+	createGrepTool,
+	createLsTool,
+	createReadTool,
+	ToolExecutionComponent,
+} from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import {
 	categoryFor,
@@ -42,6 +49,124 @@ const RENDERER_ACTIVE_KEY = Symbol.for(
 const COMPACT_CONTEXT_AT_TOKENS = 100_000;
 const REARM_CONTEXT_COMPACTION_AT_TOKENS = 80_000;
 const MAX_WIDTH = 110;
+const BATCH_TOOL_NAMES = ["read", "grep", "find", "ls", "bash", "rg", "fd"] as const;
+type BatchToolInputName = (typeof BATCH_TOOL_NAMES)[number];
+type BatchToolName = Exclude<BatchToolInputName, "rg" | "fd">;
+type BatchCall = { tool: BatchToolName; args: Record<string, unknown> };
+
+export const TOOL_BATCH_PARAMETERS = {
+	type: "object",
+	additionalProperties: false,
+	properties: {
+		calls: {
+			type: "array",
+			minItems: 1,
+			maxItems: 8,
+			items: {
+				type: "object",
+				additionalProperties: true,
+				properties: {
+					tool: { type: "string", enum: BATCH_TOOL_NAMES },
+					name: { type: "string", enum: BATCH_TOOL_NAMES },
+					args: { type: "object", additionalProperties: true },
+					arguments: { type: "object", additionalProperties: true },
+				},
+			},
+		},
+		concurrency: { type: "number", minimum: 1, maximum: 8 },
+	},
+	required: ["calls"],
+} as const;
+
+function definedArgs(args: Record<string, unknown>) {
+	return Object.fromEntries(Object.entries(args).filter(([, value]) => value !== undefined));
+}
+
+export function normalizeBatchCalls(value: unknown): BatchCall[] {
+	if (!Array.isArray(value)) return [];
+	return value.flatMap((raw): BatchCall[] => {
+		if (!raw || typeof raw !== "object") return [];
+		const record = raw as Record<string, unknown>;
+		const tool = (record.tool ?? record.name) as BatchToolInputName;
+		if (!BATCH_TOOL_NAMES.includes(tool)) return [];
+		const nested = record.args ?? record.arguments;
+		const args = {
+			...Object.fromEntries(
+				Object.entries(record).filter(
+					([key]) => !["tool", "name", "args", "arguments"].includes(key),
+				),
+			),
+			...(nested && typeof nested === "object" && !Array.isArray(nested) ? nested : {}),
+		} as Record<string, unknown>;
+		if (tool === "rg") {
+			return [{
+				tool: "grep",
+				args: definedArgs({
+					pattern: args.pattern,
+					path: args.path,
+					glob: args.glob,
+					ignoreCase: args.case_sensitive === false ? true : undefined,
+					literal: args.fixed_strings === true ? true : undefined,
+					context: args.context,
+					limit: args.limit,
+				}),
+			}];
+		}
+		if (tool === "fd") {
+			const pattern = args.glob === true
+				? args.pattern
+				: args.extension
+					? `*.${String(args.extension).replace(/^\./, "")}`
+					: args.pattern
+						? `*${args.pattern}*`
+						: "*";
+			return [{ tool: "find", args: definedArgs({ pattern, path: args.path, limit: args.limit }) }];
+		}
+		return [{ tool, args }];
+	});
+}
+
+function batchTool(name: BatchToolName, cwd: string) {
+	switch (name) {
+		case "read": return createReadTool(cwd);
+		case "grep": return createGrepTool(cwd);
+		case "find": return createFindTool(cwd);
+		case "ls": return createLsTool(cwd);
+		case "bash": return createBashTool(cwd);
+	}
+}
+
+export function registerToolBatch(pi: ExtensionAPI, cwd: string) {
+	pi.registerTool({
+		name: "tool_batch",
+		label: "Tool Batch",
+		description: "Run independent read/grep/find/ls/bash calls together. rg/fd are compatibility aliases normalized to grep/find.",
+		parameters: TOOL_BATCH_PARAMETERS as never,
+		async execute(id, params: any, signal) {
+			const calls = normalizeBatchCalls(params.calls);
+			const results = new Array<string>(calls.length);
+			let next = 0;
+			const concurrency = Math.max(1, Math.min(calls.length, Math.floor(params.concurrency ?? calls.length), 8));
+			await Promise.all(Array.from({ length: concurrency }, async () => {
+				while (next < calls.length) {
+					const index = next++;
+					const call = calls[index];
+					try {
+						const tool = batchTool(call.tool, cwd) as any;
+						const result = await tool.execute(`${id}:${index}`, call.args, signal);
+						results[index] = `## ${index + 1}. ${call.tool}\n${resultText(result) || "(no output)"}`;
+					} catch (error) {
+						results[index] = `## ${index + 1}. ${call.tool}\nError: ${error instanceof Error ? error.message : String(error)}`;
+					}
+				}
+			}));
+			return {
+				content: [{ type: "text", text: `Batch: ${calls.length} call(s)\n\n${results.join("\n\n")}` }],
+				details: { calls: calls.length },
+			};
+		},
+	});
+}
 
 export function compactionThresholds(contextWindow: number | undefined) {
 	if (!contextWindow)
@@ -584,6 +709,7 @@ export default function compactTools(pi: ExtensionAPI) {
 		state.components.clear();
 	});
 	pi.on("session_start", async (_event, ctx) => {
+		if (typeof pi.registerTool === "function") registerToolBatch(pi, ctx.cwd);
 		contextCompactionArmed = true;
 		restoreConfig(ctx);
 		capture(ctx);
