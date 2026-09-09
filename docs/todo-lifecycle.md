@@ -20,10 +20,10 @@ stateDiagram-v2
 
     WaitingUser --> Ready: correlated answer persisted
     WaitingJobs --> WaitingJobs: partial job evidence
-    WaitingJobs --> Ready: all/any condition satisfied
-    Ready --> Preparing: same-token queued preparation resumes
+    WaitingJobs --> Ready: FIX-2 matching all/any wake
+    Ready --> Preparing: FIX-2 same-token preparation restart
     Preparing --> Selected: preparation completes
-    Selected --> InProgress: parent continuation claims task
+    Selected --> InProgress: FIX-2 bounded parent continuation
 
     state "Independent completion review" as Verifying {
         [*] --> ReviewPending
@@ -31,7 +31,7 @@ stateDiagram-v2
         ReviewRunning --> ReviewApproved: evidence accepted
         ReviewRunning --> SemanticRejected: implementation or evidence rejected
         ReviewRunning --> OperationalFailure: crash, timeout, snapshot race
-        OperationalFailure --> ReviewPending: bounded backoff retry
+        OperationalFailure --> ReviewPending: FIX-1 owner release and bounded retry
     }
 
     Verifying --> Completed: ReviewApproved
@@ -45,11 +45,22 @@ stateDiagram-v2
     state "Dependency failure and recovery" as DependencyFlow {
         SourceFailed --> DependentFailed: propagate failed prerequisite
         SourceFailed --> SourceRecompleted: fresh completion evidence
-        SourceRecompleted --> SourceVerifying: stale failed verification removed
+        SourceRecompleted --> SourceVerifying: FIX-3 stale verification removed
         SourceVerifying --> SourceApproved: completion review approves
-        SourceApproved --> DependentReady: inherited failure removed
+        SourceApproved --> DependentReady: FIX-3 inherited failure removed
     }
 ```
+
+## Corrected bug map
+
+| Marker | Broken behavior | Corrected transition or boundary | Regression evidence |
+| --- | --- | --- | --- |
+| **FIX-1** | A reviewer exception could leave `review.status: pending` with no active owner and no future dispatch. | Every review run re-arms retry from its common `finally` boundary after removing active ownership. | `extensions/todo/completion-review-orphan-retry.test.mjs` |
+| **FIX-2** | A job or review approval could expose a pending task without restarting its queued preparation or waking the parent. | Job/review wake → ready → same-token preparation restart → actionable selection → bounded parent continuation. | TODO scheduler wake and descendant-continuation regressions in `extensions/todo/state/enhancements.test.mjs` and `extensions/todo/todo-orchestrator-acceptance.test.mjs` |
+| **FIX-3** | Old failed verification metadata survived fresh completion and kept descendants displayed as stale `failed prerequisite` tasks. | Fresh completion removes superseded verification failure; propagation removes inherited failure while preserving `blockedBy`. | `extensions/todo/state/inbox.test.mjs` |
+| **FIX-4** | Unsupported persisted reviewer selectors could repeatedly fail after reload. | Reviewer model normalization occurs before dispatch; narrowly recognized obsolete-model failures are requeued on replay. | `extensions/todo/state/completion-operational-exhaustion.test.mjs` |
+| **FIX-5** | A rejected `ask_user` UI promise skipped deadline cleanup and held the vendor Node process open. | Deadline cleanup now executes in `finally` for success, cancellation, and rejection. | `vendor/pi-tools/extensions/ask-user/context.test.ts` |
+| **FIX-6** | Large dirty worktrees could lose a review baseline or exceed blob-diff capture limits. | Baselines accept 128 paths and 64 KiB metadata; blob capture is bounded before the 24,000-character overlay truncation. | Boundary and large-blob regressions in `extensions/todo/state/enhancements.test.mjs` |
 
 ## Actionable selection and continuation
 
