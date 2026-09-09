@@ -1,7 +1,7 @@
 export const FLEET_QUERY_CHANNEL = "fleet:query:v1";
 export const FLEET_STATE_CHANNEL = "fleet:state:v1";
 export const FLEET_OPEN_CHANNEL = "fleet:open:v1";
-export const FLEET_SETTLED_LINGER_MS = 4_000;
+export const FLEET_SETTLED_LINGER_MS = 15_000;
 
 export type FleetStatus = "running" | "paused" | "done" | "error" | "aborted";
 

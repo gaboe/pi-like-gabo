@@ -67,12 +67,20 @@ describe("parseSkillRefs", () => {
     const refs = parseSkillRefs(
       "Use $real but not `$inline`\n\n```sh\necho $fenced\n```\n\n~~~sh\necho $tilde\n~~~\n\n    echo $indented",
     );
-    assert.deepEqual(refs.map((ref) => ref.name), ["real"]);
+    assert.deepEqual(
+      refs.map((ref) => ref.name),
+      ["real"],
+    );
   });
 
   it("treats escaped and unmatched backticks as literal text", () => {
-    const refs = parseSkillRefs("\\` literal $first and unmatched ` then $second");
-    assert.deepEqual(refs.map((ref) => ref.name), ["first", "second"]);
+    const refs = parseSkillRefs(
+      "\\` literal $first and unmatched ` then $second",
+    );
+    assert.deepEqual(
+      refs.map((ref) => ref.name),
+      ["first", "second"],
+    );
   });
 
   it("handles empty string", () => {

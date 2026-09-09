@@ -1,19 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  TodoDetailView,
-  showTodoDetailView,
-} from "./todo-detail-view.ts";
+import { TodoDetailView, showTodoDetailView } from "./todo-detail-view.ts";
 import { __resetState, commitState } from "./state/store.ts";
 
-const theme = new Proxy({}, {
-  get: (_target, key) =>
-    key === "bold"
-      ? (text) => text
-      : key === "fg"
-        ? (_color, text) => text
-        : undefined,
-});
+const theme = new Proxy(
+  {},
+  {
+    get: (_target, key) =>
+      key === "bold"
+        ? (text) => text
+        : key === "fg"
+          ? (_color, text) => text
+          : undefined,
+  },
+);
 
 const preparedTask = {
   id: 7,

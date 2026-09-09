@@ -26,7 +26,9 @@
   "scripts": {
     "build:comment-checker": "bash scripts/build-comment-checker.sh",
     "setup:ben": "bash scripts/setup-ben-plugins.sh",
-    "check": "npm run typecheck && npm test && npm run vendor:build:native && npm run vendor:test && npm run vendor:typecheck && npm run vendor:format:check",
+    "format": "vendor/pi-tools/node_modules/.bin/prettier --write \"extensions/**/*.{ts,mjs,js,json}\" package.json",
+    "format:check": "vendor/pi-tools/node_modules/.bin/prettier --check \"extensions/**/*.{ts,mjs,js,json}\" package.json",
+    "check": "npm run format:check && npm run typecheck && npm test && npm run vendor:build:native && npm run vendor:test && npm run vendor:typecheck && npm run vendor:format:check",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test 'extensions/**/*.test.mjs'",
     "vendor:build:native": "npm --prefix vendor/pi-tools run build:native",

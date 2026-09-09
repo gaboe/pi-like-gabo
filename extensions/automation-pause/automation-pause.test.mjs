@@ -41,8 +41,12 @@ function extensionHarness({ editorText = "", active = true } = {}) {
   sessionStart({}, ctx);
   return {
     pressEscape: () => terminalInput(esc),
-    get aborts() { return aborts; },
-    get pauses() { return pauses; },
+    get aborts() {
+      return aborts;
+    },
+    get pauses() {
+      return pauses;
+    },
     notifications,
   };
 }

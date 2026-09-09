@@ -1,6 +1,8 @@
 export interface PackageAssignmentRequest {
   todoId: number;
   todoToken: string;
+  workerCwd: string;
+  targetBinding: string;
 }
 
 export interface PackageAssignmentAuthorization extends PackageAssignmentRequest {
@@ -13,20 +15,46 @@ export type PackageAssignmentGate = (
 export type PackageAssignmentAuthorizer = (
   authorization: PackageAssignmentAuthorization,
 ) => void;
+export type PackageAssignmentRollback = (
+  authorization: PackageAssignmentAuthorization,
+  reason: string,
+) => void;
 
 export interface PackageAssignmentLease {
   validate(): string | undefined;
   authorize(subagentId: string): string | undefined;
+  rollback(subagentId: string, reason: string): string | undefined;
   close(): void;
 }
 
 const KEY = Symbol.for("pi.package-assignment-gate.v1");
 const GATE_UNAVAILABLE = "package_handoff assignment gate unavailable.";
+const AUTHORIZER_UNAVAILABLE =
+  "package_handoff assignment authorizer unavailable.";
+const ROLLBACK_UNAVAILABLE = "package_handoff assignment rollback unavailable.";
 const GATE_CHANGED = "package_handoff assignment gate changed during spawn.";
 const ACQUISITION_ABORTED =
   "package_handoff assignment acquisition was aborted.";
 const ALREADY_SPAWNING =
   "package_handoff assignment is already spawning for this TODO.";
+
+function invalidRequest(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return "package_handoff assignment requires a canonical worker cwd and target binding.";
+  const request = value as Record<string, unknown>;
+  if (
+    typeof request.workerCwd !== "string" ||
+    !request.workerCwd.startsWith("/") ||
+    !request.workerCwd.trim()
+  )
+    return "package_handoff assignment requires a canonical worker cwd.";
+  if (
+    typeof request.targetBinding !== "string" ||
+    !/^[a-f0-9]{64}$/i.test(request.targetBinding)
+  )
+    return "package_handoff assignment requires the current prepared target binding.";
+  return undefined;
+}
 
 type Waiter = {
   request: PackageAssignmentRequest;
@@ -41,6 +69,7 @@ type Waiter = {
 type Registry = {
   gate?: PackageAssignmentGate;
   authorize?: PackageAssignmentAuthorizer;
+  rollback?: PackageAssignmentRollback;
   generation: number;
   leases: Map<string, symbol>;
   waiters: Map<string, Waiter[]>;
@@ -90,8 +119,10 @@ function createLease(
 ): PackageAssignmentLease {
   const owner = Symbol();
   const authorize = state.authorize;
+  const rollback = state.rollback;
   state.leases.set(key, owner);
   let closed = false;
+  let authorizedSubagentId: string | undefined;
   const release = () => {
     if (closed) return;
     closed = true;
@@ -120,11 +151,35 @@ function createLease(
     authorize(subagentId) {
       const error = validate();
       if (error) return error;
+      if (!authorize) {
+        release();
+        return AUTHORIZER_UNAVAILABLE;
+      }
+      if (!rollback) {
+        release();
+        return ROLLBACK_UNAVAILABLE;
+      }
       try {
-        authorize?.({ ...request, subagentId });
+        authorize({ ...request, subagentId });
+        authorizedSubagentId = subagentId;
         return undefined;
       } catch {
+        release();
         return "package_handoff assignment gate rejected authorization.";
+      }
+    },
+    rollback(subagentId, reason) {
+      if (authorizedSubagentId !== subagentId)
+        return "package_handoff assignment rollback was not authorized.";
+      if (!rollback) {
+        release();
+        return ROLLBACK_UNAVAILABLE;
+      }
+      try {
+        rollback({ ...request, subagentId }, reason);
+        return undefined;
+      } catch {
+        return "package_handoff assignment rollback was rejected.";
       } finally {
         release();
       }
@@ -163,18 +218,21 @@ function wakeNext(state: Registry, key: string): void {
 
 export function registerPackageAssignmentGate(
   gate: PackageAssignmentGate,
-  authorize?: PackageAssignmentAuthorizer,
+  authorize: PackageAssignmentAuthorizer,
+  rollback: PackageAssignmentRollback,
 ): () => void {
   const state = registry();
   const generation = ++state.generation;
   state.leases.clear();
   state.gate = gate;
   state.authorize = authorize;
+  state.rollback = rollback;
   failWaiters(state, GATE_CHANGED);
   return () => {
     if (state.generation !== generation || state.gate !== gate) return;
     delete state.gate;
     delete state.authorize;
+    delete state.rollback;
     state.leases.clear();
     state.generation++;
     failWaiters(state, GATE_UNAVAILABLE);
@@ -184,6 +242,8 @@ export function registerPackageAssignmentGate(
 export function packageAssignmentError(
   request: PackageAssignmentRequest,
 ): string | undefined {
+  const requestError = invalidRequest(request);
+  if (requestError) return requestError;
   const gate = registry().gate;
   if (!gate) return GATE_UNAVAILABLE;
   try {

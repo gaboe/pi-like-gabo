@@ -18,17 +18,35 @@ export type ToolCategory =
 const TOOLS: Record<Exclude<ToolCategory, "unknown">, ReadonlySet<string>> = {
   read: new Set(["read", "grep", "find", "ls", "fd", "rg"]),
   "local-write": new Set(["write", "edit"]),
-  process: new Set(["bash", "bg_start", "bg_status", "bg_wait", "bg_kill", "bg_list"]),
-  network: new Set(["web_search", "source_check", "fetch_content", "search", "crawl", "scrape"]),
+  process: new Set([
+    "bash",
+    "bg_start",
+    "bg_status",
+    "bg_wait",
+    "bg_kill",
+    "bg_list",
+  ]),
+  network: new Set([
+    "web_search",
+    "source_check",
+    "fetch_content",
+    "search",
+    "crawl",
+    "scrape",
+  ]),
   external: new Set(["ask_user"]),
   orchestration: new Set(["jobs", "todo", "workflow", "package_worker_spawn"]),
 };
 
 export function classifyTool(toolName: string): ToolCategory {
-  for (const [category, names] of Object.entries(TOOLS) as [Exclude<ToolCategory, "unknown">, ReadonlySet<string>][]) {
+  for (const [category, names] of Object.entries(TOOLS) as [
+    Exclude<ToolCategory, "unknown">,
+    ReadonlySet<string>,
+  ][]) {
     if (names.has(toolName)) return category;
   }
-  if (toolName.startsWith("subagent_") || toolName.startsWith("workflow_")) return "orchestration";
+  if (toolName.startsWith("subagent_") || toolName.startsWith("workflow_"))
+    return "orchestration";
   return "unknown";
 }
 
@@ -47,15 +65,21 @@ export interface CanonicalPathAnalysis {
 function localPath(requestedPath: string): string {
   if (requestedPath.startsWith("file:")) return fileURLToPath(requestedPath);
   if (requestedPath === "~") return homedir();
-  if (requestedPath.startsWith("~/")) return path.join(homedir(), requestedPath.slice(2));
+  if (requestedPath.startsWith("~/"))
+    return path.join(homedir(), requestedPath.slice(2));
   return requestedPath;
 }
 
-function canonicalizeWithExistingAncestor(requestedPath: string, cwd: string): {
-  canonicalPath: string;
-  existingAncestor: string;
-  targetExists: boolean;
-} | undefined {
+function canonicalizeWithExistingAncestor(
+  requestedPath: string,
+  cwd: string,
+):
+  | {
+      canonicalPath: string;
+      existingAncestor: string;
+      targetExists: boolean;
+    }
+  | undefined {
   const absolute = path.resolve(cwd, localPath(requestedPath));
   const root = path.parse(absolute).root;
   const parts = absolute.slice(root.length).split(path.sep).filter(Boolean);
@@ -90,17 +114,27 @@ function canonicalizeWithExistingAncestor(requestedPath: string, cwd: string): {
   return { canonicalPath, existingAncestor, targetExists: true };
 }
 
-export function analyzePath(requestedPath: string, root: string, cwd = root): CanonicalPathAnalysis {
+export function analyzePath(
+  requestedPath: string,
+  root: string,
+  cwd = root,
+): CanonicalPathAnalysis {
   try {
     const target = canonicalizeWithExistingAncestor(requestedPath, cwd);
     const canonicalRoot = canonicalizeWithExistingAncestor(root, cwd);
     if (!target || !canonicalRoot) throw new Error("canonical path unresolved");
-    const relative = path.relative(canonicalRoot.canonicalPath, target.canonicalPath);
-    const containment: Containment = relative === ""
-      ? "same"
-      : relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
-        ? "outside"
-        : "inside";
+    const relative = path.relative(
+      canonicalRoot.canonicalPath,
+      target.canonicalPath,
+    );
+    const containment: Containment =
+      relative === ""
+        ? "same"
+        : relative === ".." ||
+            relative.startsWith(`..${path.sep}`) ||
+            path.isAbsolute(relative)
+          ? "outside"
+          : "inside";
 
     return {
       requestedPath,
@@ -139,14 +173,22 @@ export interface PermissionAuditEvent {
 
 const PATH_FIELDS = ["path", "filePath", "target"] as const;
 
-export function createAuditEvent(toolName: string, input: Record<string, unknown>, root: string): PermissionAuditEvent {
+export function createAuditEvent(
+  toolName: string,
+  input: Record<string, unknown>,
+  root: string,
+): PermissionAuditEvent {
   const paths: PermissionAuditEvent["paths"] = [];
   for (const field of PATH_FIELDS) {
     const value = input[field];
     if (typeof value !== "string" || !value) continue;
     try {
       const result = analyzePath(value, root);
-      paths.push({ field, targetExists: result.targetExists, containment: result.containment });
+      paths.push({
+        field,
+        targetExists: result.targetExists,
+        containment: result.containment,
+      });
     } catch {
       paths.push({ field, targetExists: false, containment: "unknown" });
     }
@@ -165,7 +207,11 @@ export function createAuditEvent(toolName: string, input: Record<string, unknown
 export function createBoundedAuditRecorder(
   emit: (event: PermissionAuditEvent) => void,
   limit = AUDIT_EVENT_LIMIT,
-): { record(event: PermissionAuditEvent): void; snapshot(): PermissionAuditEvent[]; reset(): void } {
+): {
+  record(event: PermissionAuditEvent): void;
+  snapshot(): PermissionAuditEvent[];
+  reset(): void;
+} {
   const events: PermissionAuditEvent[] = [];
   return {
     record(event) {
@@ -173,8 +219,14 @@ export function createBoundedAuditRecorder(
       if (events.length > limit) events.splice(0, events.length - limit);
       emit(event);
     },
-    snapshot: () => events.map((event) => ({ ...event, paths: event.paths.map((item) => ({ ...item })) })),
-    reset: () => { events.length = 0; },
+    snapshot: () =>
+      events.map((event) => ({
+        ...event,
+        paths: event.paths.map((item) => ({ ...item })),
+      })),
+    reset: () => {
+      events.length = 0;
+    },
   };
 }
 

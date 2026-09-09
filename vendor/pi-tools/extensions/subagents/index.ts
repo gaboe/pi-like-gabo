@@ -131,6 +131,8 @@ export function validateSubagentAssignment(
   outputContract: unknown,
   todoId: unknown,
   todoToken: unknown,
+  workerCwd?: string,
+  targetBinding?: string,
 ): string | undefined {
   const ownershipError = validatePackageOwnership(
     outputContract,
@@ -139,9 +141,13 @@ export function validateSubagentAssignment(
   );
   if (ownershipError || outputContract !== "package_handoff")
     return ownershipError;
+  if (typeof workerCwd !== "string" || typeof targetBinding !== "string")
+    return "package_handoff assignment requires a canonical worker cwd and target binding.";
   return packageAssignmentError({
     todoId: todoId as number,
     todoToken: todoToken as string,
+    workerCwd,
+    targetBinding,
   });
 }
 
@@ -171,6 +177,7 @@ export async function spawnPackageAssignment<
   const lease = await acquirePackageAssignmentLeaseAsync(request, signal);
   if (typeof lease === "string") throw new Error(lease);
   let pending = false;
+  let authorized = false;
   const report = (error: unknown) => {
     try {
       callbacks.onCallbackError?.(error);
@@ -203,8 +210,16 @@ export async function spawnPackageAssignment<
     const snapshot = await callbacks.spawn(manager, signal);
     const error = aborted() ?? lease.validate();
     const authorizationError = error ? undefined : lease.authorize(snapshot.id);
+    authorized = !error && !authorizationError;
     const rejection = error ?? authorizationError ?? aborted();
+    const rollbackPublished = async (reason: string): Promise<void> => {
+      if (!authorized) return;
+      const rollbackError = lease.rollback(snapshot.id, reason);
+      authorized = false;
+      if (rollbackError) report(rollbackError);
+    };
     if (rejection) {
+      await rollbackPublished(rejection);
       observe(() => callbacks.onRejected?.(snapshot, manager));
       try {
         await callbacks.reject?.(manager, snapshot.id, rejection);
@@ -218,8 +233,9 @@ export async function spawnPackageAssignment<
       }
       throw new Error(rejection);
     }
-    const beforeStartError = aborted();
+    const beforeStartError = lease.validate() ?? aborted();
     if (beforeStartError) {
+      await rollbackPublished(beforeStartError);
       observe(() => callbacks.onRejected?.(snapshot, manager));
       try {
         await callbacks.reject?.(manager, snapshot.id, beforeStartError);
@@ -236,6 +252,9 @@ export async function spawnPackageAssignment<
     try {
       await callbacks.start?.(manager, snapshot.id, signal);
     } catch (startError) {
+      await rollbackPublished(
+        startError instanceof Error ? startError.message : String(startError),
+      );
       observe(() => callbacks.onRejected?.(snapshot, manager));
       try {
         await callbacks.reject?.(
@@ -253,8 +272,9 @@ export async function spawnPackageAssignment<
       }
       throw startError;
     }
-    const afterStartError = aborted();
+    const afterStartError = lease.validate() ?? aborted();
     if (afterStartError) {
+      await rollbackPublished(afterStartError);
       observe(() => callbacks.onRejected?.(snapshot, manager));
       try {
         await callbacks.reject?.(manager, snapshot.id, afterStartError);
@@ -918,6 +938,13 @@ export default function (pi: ExtensionAPI) {
             description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.todoToken,
           }),
         ),
+        target_binding: Type.Optional(
+          Type.String({
+            pattern: "^[a-fA-F0-9]{64}$",
+            description:
+              "Opaque host-derived binding for the prepared execution target.",
+          }),
+        ),
       },
       { additionalProperties: false },
     ),
@@ -927,17 +954,20 @@ export default function (pi: ExtensionAPI) {
           throw new Error(
             `Legacy external selector "${selector}" is not supported; Pi subagents are always in-process.`,
           );
+      const backend = "pi";
+      const requestedCwd = path.resolve(ctx.cwd, params.working_dir ?? ".");
+      const cwd = fs.realpathSync(requestedCwd);
+      if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
+        throw new Error(`working_dir is not a directory: ${cwd}`);
+      }
       const assignmentError = validateSubagentAssignment(
         params.output_contract,
         params.todo_id,
         params.todo_token,
+        cwd,
+        params.target_binding,
       );
       if (assignmentError) throw new Error(assignmentError);
-      const backend = "pi";
-      const cwd = path.resolve(ctx.cwd, params.working_dir ?? ".");
-      if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
-        throw new Error(`working_dir is not a directory: ${cwd}`);
-      }
 
       const title = params.name.trim().slice(0, 160) || "subagent";
       const spawn = (
@@ -966,6 +996,8 @@ export default function (pi: ExtensionAPI) {
                     packageAssignmentError({
                       todoId: params.todo_id!,
                       todoToken: params.todo_token!,
+                      workerCwd: cwd,
+                      targetBinding: params.target_binding!,
                     })
                 : undefined,
             parent: {
@@ -990,6 +1022,8 @@ export default function (pi: ExtensionAPI) {
         const request = {
           todoId: params.todo_id!,
           todoToken: params.todo_token!,
+          workerCwd: cwd,
+          targetBinding: params.target_binding!,
         };
         snap = await spawnPackageAssignment(
           request,

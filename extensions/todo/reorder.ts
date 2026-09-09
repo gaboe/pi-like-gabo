@@ -27,20 +27,31 @@ export function createTodoReorderSnapshot(
     : undefined;
 }
 
+const MAX_REORDER_RESPONSE_CHARS = 4_096;
+
 export function parseTodoReorder(
   text: string,
   expectedIds: readonly number[],
 ): number[] | undefined {
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) return undefined;
+  if (text.length > MAX_REORDER_RESPONSE_CHARS) return undefined;
   try {
-    const value = JSON.parse(match[0]) as { order?: unknown };
+    const value = JSON.parse(text);
     if (
-      !Array.isArray(value.order) ||
-      value.order.some((id) => !Number.isSafeInteger(id))
+      !value ||
+      typeof value !== "object" ||
+      Array.isArray(value) ||
+      Object.getPrototypeOf(value) !== Object.prototype ||
+      Object.keys(value).length !== 1 ||
+      Object.keys(value)[0] !== "order" ||
+      !Array.isArray((value as Record<string, unknown>).order)
     )
       return undefined;
-    const order = value.order as number[];
+    const order = (value as Record<string, unknown>).order as unknown[];
+    if (
+      order.length > expectedIds.length ||
+      !order.every((id): id is number => Number.isSafeInteger(id))
+    )
+      return undefined;
     if (
       order.length !== expectedIds.length ||
       new Set(order).size !== order.length

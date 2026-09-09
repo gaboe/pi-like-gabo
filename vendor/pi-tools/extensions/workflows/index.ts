@@ -676,7 +676,6 @@ export default function workflows(pi: ExtensionAPI) {
         );
       emitTelemetry(pi.events, {
         type: "workflow_run",
-        runId,
         phase: "start",
         status: "running",
         durationMs: 0,
@@ -841,7 +840,6 @@ export default function workflows(pi: ExtensionAPI) {
         record.maxTurns = maxTurns;
         emitTelemetry(pi.events, {
           type: "workflow_agent",
-          runId,
           agentIndex: record.index,
           phase: "start",
           status: "running",
@@ -1057,7 +1055,6 @@ export default function workflows(pi: ExtensionAPI) {
                   : "failed";
             emitTelemetry(pi.events, {
               type: "workflow_agent",
-              runId,
               agentIndex: record.index,
               phase: "settle",
               status,
@@ -1142,7 +1139,6 @@ export default function workflows(pi: ExtensionAPI) {
         );
         emitTelemetry(pi.events, {
           type: "workflow_run",
-          runId,
           phase: "settle",
           status:
             details.status === "completed"

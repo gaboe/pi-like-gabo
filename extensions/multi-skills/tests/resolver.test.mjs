@@ -11,7 +11,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildSkillRegistry, formatSkillTable } from "../resolver.ts";
 
-function skillCommand({ name, description = "Test skill", path, baseDir, scope = "user" }) {
+function skillCommand({
+  name,
+  description = "Test skill",
+  path,
+  baseDir,
+  scope = "user",
+}) {
   return {
     name: `skill:${name}`,
     description,
@@ -69,7 +75,12 @@ describe("buildSkillRegistry", () => {
   it("builds a registry from Pi skill commands", () => {
     const registry = buildSkillRegistry([
       extensionCommand(),
-      skillCommand({ name: "my-skill", description: "My test skill", path: skillFile, baseDir: skillDir }),
+      skillCommand({
+        name: "my-skill",
+        description: "My test skill",
+        path: skillFile,
+        baseDir: skillDir,
+      }),
     ]);
 
     assert.equal(registry.size, 1);
@@ -88,7 +99,12 @@ describe("buildSkillRegistry", () => {
 
   it("supports flat markdown skill paths exposed by Pi", () => {
     const registry = buildSkillRegistry([
-      skillCommand({ name: "flat-skill", path: flatSkillFile, baseDir: tmpDir, scope: "project" }),
+      skillCommand({
+        name: "flat-skill",
+        path: flatSkillFile,
+        baseDir: tmpDir,
+        scope: "project",
+      }),
     ]);
 
     const skill = registry.get("flat-skill");
@@ -100,8 +116,18 @@ describe("buildSkillRegistry", () => {
 
   it("keeps the first skill on duplicate names to preserve Pi command order", () => {
     const registry = buildSkillRegistry([
-      skillCommand({ name: "my-skill", description: "First", path: skillFile, baseDir: skillDir }),
-      skillCommand({ name: "my-skill", description: "Second", path: skillFile, baseDir: skillDir }),
+      skillCommand({
+        name: "my-skill",
+        description: "First",
+        path: skillFile,
+        baseDir: skillDir,
+      }),
+      skillCommand({
+        name: "my-skill",
+        description: "Second",
+        path: skillFile,
+        baseDir: skillDir,
+      }),
     ]);
 
     assert.equal(registry.get("my-skill")?.description, "First");
@@ -120,7 +146,12 @@ describe("buildSkillRegistry", () => {
 describe("formatSkillTable", () => {
   it("formats registered skills with $ syntax", () => {
     const registry = buildSkillRegistry([
-      skillCommand({ name: "my-skill", description: "My test skill", path: skillFile, baseDir: skillDir }),
+      skillCommand({
+        name: "my-skill",
+        description: "My test skill",
+        path: skillFile,
+        baseDir: skillDir,
+      }),
     ]);
 
     assert.match(formatSkillTable(registry), /\$my-skill\s+My test skill/);

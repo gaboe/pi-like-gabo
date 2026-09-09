@@ -33,7 +33,11 @@ function findCodeRanges(text: string): TextRange[] {
     const marker = opening[1][0];
     const minimumLength = opening[1].length;
     let end = text.length;
-    for (let closingIndex = lineIndex + 1; closingIndex < lines.length; closingIndex++) {
+    for (
+      let closingIndex = lineIndex + 1;
+      closingIndex < lines.length;
+      closingIndex++
+    ) {
       const closingText = lines[closingIndex][0].replace(/\n$/, "");
       const closing = closingText.match(/^ {0,3}(`+|~+)\s*$/);
       if (
@@ -53,10 +57,7 @@ function findCodeRanges(text: string): TextRange[] {
 
   // Four-space/tab-indented code lines outside fenced blocks.
   for (const line of lines) {
-    if (
-      /^(?: {4}|\t)/.test(line[0]) &&
-      !isInRange(line.index ?? 0, ranges)
-    ) {
+    if (/^(?: {4}|\t)/.test(line[0]) && !isInRange(line.index ?? 0, ranges)) {
       ranges.push({
         start: line.index ?? 0,
         end: (line.index ?? 0) + line[0].length,
@@ -68,7 +69,11 @@ function findCodeRanges(text: string): TextRange[] {
 
   // Inline backtick spans. Unmatched and escaped backticks are literal text.
   for (let index = 0; index < text.length;) {
-    if (text[index] !== "`" || isEscaped(text, index) || isInRange(index, ranges)) {
+    if (
+      text[index] !== "`" ||
+      isEscaped(text, index) ||
+      isInRange(index, ranges)
+    ) {
       index++;
       continue;
     }
@@ -115,9 +120,9 @@ function isInRange(index: number, ranges: TextRange[]): boolean {
 }
 
 export interface ParsedRef {
-  raw: string;       // Full match including $, e.g. "$skillA"
-  name: string;      // Skill name without $, e.g. "skillA"
-  index: number;     // Position in original text
+  raw: string; // Full match including $, e.g. "$skillA"
+  name: string; // Skill name without $, e.g. "skillA"
+  index: number; // Position in original text
 }
 
 /**
@@ -165,7 +170,9 @@ export function replaceSkillRefs(
   text: string,
   replacements: SkillReplacement[],
 ): string {
-  const markers = new Map(replacements.map(({ name, marker }) => [name, marker]));
+  const markers = new Map(
+    replacements.map(({ name, marker }) => [name, marker]),
+  );
   const codeRanges = findCodeRanges(text);
   const parts: string[] = [];
   let lastIndex = 0;

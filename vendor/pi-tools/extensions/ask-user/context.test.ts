@@ -632,17 +632,31 @@ test("ask_user balances Herdr blocked state around interactive wait", async () =
 
 test("ask_user clears Herdr blocked state when the UI rejects", async () => {
   let tool: any;
+  let timerCleared = false;
   const events: unknown[] = [];
-  askUser({
-    events: {
-      emit(name: string, payload: unknown) {
-        if (name === "herdr:blocked") events.push(payload);
+  askUser(
+    {
+      events: {
+        emit(name: string, payload: unknown) {
+          if (name === "herdr:blocked") events.push(payload);
+        },
+      },
+      registerTool(definition: unknown) {
+        tool = definition;
+      },
+    } as never,
+    {
+      timers: {
+        setTimeout: (() =>
+          1 as unknown as ReturnType<
+            typeof setTimeout
+          >) as unknown as typeof setTimeout,
+        clearTimeout: (() => {
+          timerCleared = true;
+        }) as typeof clearTimeout,
       },
     },
-    registerTool(definition: unknown) {
-      tool = definition;
-    },
-  } as never);
+  );
 
   await assert.rejects(
     tool.execute(
@@ -661,6 +675,7 @@ test("ask_user clears Herdr blocked state when the UI rejects", async () => {
     { active: true, label: "Choose?" },
     { active: false },
   ]);
+  assert.equal(timerCleared, true);
 });
 
 test("ask_user balances blocked state across timeout abort and retry", async () => {

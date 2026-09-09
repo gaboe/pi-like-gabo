@@ -1,12 +1,21 @@
+import { isDeepStrictEqual } from "node:util";
 import type { Task } from "../tool/types.js";
 import { EMPTY_STATE, type TaskState } from "./state.js";
+import {
+  isPersistableTaskState,
+  pruneTodoStateForPersistence,
+} from "./replay.js";
 
 /**
  * Module-level live state cell. Pre-refactor this lived as bare `tasks` /
  * `nextId` consts in `todo.ts`; centralizing here keeps the store as the
  * single mutation seam and lets the reducer remain pure.
  */
-let state: TaskState = { tasks: [...EMPTY_STATE.tasks], nextId: EMPTY_STATE.nextId, revision: EMPTY_STATE.revision };
+let state: TaskState = {
+  tasks: [...EMPTY_STATE.tasks],
+  nextId: EMPTY_STATE.nextId,
+  revision: EMPTY_STATE.revision,
+};
 const listeners = new Set<(previous: TaskState, next: TaskState) => void>();
 
 /**
@@ -15,16 +24,16 @@ const listeners = new Set<(previous: TaskState, next: TaskState) => void>();
  * cell. Consumers must not cast back.
  */
 export function getTodos(): readonly Task[] {
-	return state.tasks;
+  return state.tasks;
 }
 
 export function getNextId(): number {
-	return state.nextId;
+  return state.nextId;
 }
 
 /** Snapshot accessor used by reducer callers to pass canonical state in. */
 export function getState(): TaskState {
-	return state;
+  return state;
 }
 
 /**
@@ -33,7 +42,12 @@ export function getState(): TaskState {
  * `replayFromBranch` decodes the latest snapshot.
  */
 export function replaceState(next: TaskState): void {
-	state = next;
+  if (!isPersistableTaskState(next, { allowTaskOverflow: true }))
+    throw new Error("TODO state exceeds the bounded replay schema");
+  const bounded = pruneTodoStateForPersistence(next);
+  if (!bounded || !isPersistableTaskState(bounded))
+    throw new Error("TODO state exceeds the bounded replay schema");
+  state = isDeepStrictEqual(next, bounded) ? next : bounded;
 }
 
 /**
@@ -42,18 +56,25 @@ export function replaceState(next: TaskState): void {
  * `/todos`, renderCall).
  */
 export function commitState(next: TaskState): void {
-	const previous = state;
-	state = next.orchestrator || !previous.orchestrator ? next : { ...next, orchestrator: previous.orchestrator };
-	for (const listener of [...listeners]) {
-		try {
-			listener(previous, next);
-		} catch {}
-	}
+  const previous = state;
+  if (!isPersistableTaskState(next, { allowTaskOverflow: true }))
+    throw new Error("TODO state exceeds the bounded replay schema");
+  const bounded = pruneTodoStateForPersistence(next);
+  if (!bounded || !isPersistableTaskState(bounded))
+    throw new Error("TODO state exceeds the bounded replay schema");
+  state = isDeepStrictEqual(next, bounded) ? next : bounded;
+  for (const listener of [...listeners]) {
+    try {
+      listener(previous, state);
+    } catch {}
+  }
 }
 
-export function subscribeState(listener: (previous: TaskState, next: TaskState) => void): () => void {
-	listeners.add(listener);
-	return () => listeners.delete(listener);
+export function subscribeState(
+  listener: (previous: TaskState, next: TaskState) => void,
+): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 }
 
 /**
@@ -62,5 +83,9 @@ export function subscribeState(listener: (previous: TaskState, next: TaskState) 
  * Plan §Decisions §Decision 7.
  */
 export function __resetState(): void {
-	state = { tasks: [...EMPTY_STATE.tasks], nextId: EMPTY_STATE.nextId, revision: EMPTY_STATE.revision };
+  state = {
+    tasks: [...EMPTY_STATE.tasks],
+    nextId: EMPTY_STATE.nextId,
+    revision: EMPTY_STATE.revision,
+  };
 }

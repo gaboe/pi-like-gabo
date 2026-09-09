@@ -27,7 +27,7 @@ export default function (pi: ExtensionAPI) {
   // Lazy initialization lets startup resource discovery finish first.
   let registryCache: ReturnType<typeof buildSkillRegistry> | undefined;
   const getRegistry = () =>
-    registryCache ??= buildSkillRegistry(pi.getCommands());
+    (registryCache ??= buildSkillRegistry(pi.getCommands()));
 
   pi.on("session_start", async (_event, ctx) => {
     // Capture current theme for styling skill names
@@ -64,9 +64,10 @@ export default function (pi: ExtensionAPI) {
         }> = [];
         for (const [name, info] of registry) {
           if (name.startsWith(partial) || name.includes(partial)) {
-            const desc = info.description.length > 80
-              ? info.description.slice(0, 80) + "..."
-              : info.description;
+            const desc =
+              info.description.length > 80
+                ? info.description.slice(0, 80) + "..."
+                : info.description;
             // Plain text value (editor text buffer) + trailing space for seamless typing
             // Colored label for autocomplete dropdown display
             items.push({
@@ -99,11 +100,8 @@ export default function (pi: ExtensionAPI) {
 
       shouldTriggerFileCompletion(lines, cursorLine, cursorCol) {
         return (
-          current.shouldTriggerFileCompletion?.(
-            lines,
-            cursorLine,
-            cursorCol,
-          ) ?? true
+          current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ??
+          true
         );
       },
     }));
@@ -143,9 +141,10 @@ export default function (pi: ExtensionAPI) {
           name.includes(keyword) ||
           info.description.toLowerCase().includes(keyword)
         ) {
-          const desc = info.description.length > 60
-            ? info.description.slice(0, 60) + "..."
-            : info.description;
+          const desc =
+            info.description.length > 60
+              ? info.description.slice(0, 60) + "..."
+              : info.description;
           matches.push(`  \$${name.padEnd(28)} ${desc}`);
         }
       }

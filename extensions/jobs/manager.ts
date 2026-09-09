@@ -47,6 +47,7 @@ interface CommandBackend {
 
 interface ActiveJob {
   generation: number;
+  incarnation: string;
   closed: boolean;
   workspaceActivity?: WorkspaceActivity;
   queued: number;
@@ -136,11 +137,23 @@ export class JobManager {
     private readonly hooks: JobManagerHooks,
   ) {}
 
-  async initialize(sessionId: string, cwd: string) {
+  async initialize(sessionId: string, cwd: string, signal?: AbortSignal) {
+    if (signal?.aborted) throw signal.reason;
     const persisted = await this.store.open(sessionId, cwd);
+    if (signal?.aborted) throw signal.reason;
     this.scope = persisted ?? { version: 1, sessionId, cwd, jobs: [] };
-    for (const job of this.scope.jobs) this.jobs.set(job.id, job);
+    let migrated = false;
+    for (const job of this.scope.jobs) {
+      if (!job.incarnation) {
+        job.incarnation = randomUUID();
+        migrated = true;
+      }
+      this.jobs.set(job.id, job);
+    }
+    if (migrated) await this.save(true);
+    if (signal?.aborted) throw signal.reason;
     await this.resume();
+    if (signal?.aborted) throw signal.reason;
   }
 
   list() {
@@ -165,6 +178,7 @@ export class JobManager {
         definition: clone(definition),
         status: "starting",
         createdAt: now,
+        incarnation: randomUUID(),
         updatedAt: now,
         attempt: 1,
         events: [],
@@ -225,7 +239,7 @@ export class JobManager {
     this.emit(job, "deleted");
   }
 
-  async dispose() {
+  async dispose({ persist = true }: { persist?: boolean } = {}) {
     this.shuttingDown = true;
     const active = [...this.active.values()];
     for (const job of this.jobs.values()) {
@@ -242,7 +256,7 @@ export class JobManager {
     }
     await Promise.allSettled(active.map((entry) => entry.stop()));
     await Promise.allSettled(active.map((entry) => entry.chain));
-    await this.save(true);
+    if (persist && this.scope) await this.save(true);
     this.active.clear();
   }
 
@@ -394,11 +408,11 @@ export class JobManager {
           cwd: definition.cwd,
         },
         (output) =>
-          this.queue(job, () =>
+          this.queue(job, active, () =>
             this.ingestCommandChunk(job, active, output.stream, output.data),
           ),
         (settlement) =>
-          this.queue(job, async () => {
+          this.queue(job, active, async () => {
             await this.flushCommandBuffers(job, active);
             await this.commandSettled(job, settlement);
           }),
@@ -422,15 +436,11 @@ export class JobManager {
         active.workspaceActivity = undefined;
       }
     };
-    if (this.shuttingDown || active.generation !== job.attempt) {
+    if (!this.isCurrent(job, active)) {
       await active.stop();
       throw new Error("Job start was interrupted by session shutdown.");
     }
-    if (
-      active.closed ||
-      TERMINAL.has(job.status) ||
-      this.active.get(job.id) !== active
-    ) {
+    if (TERMINAL.has(job.status)) {
       await active.chain;
       await active.stop();
       if (TERMINAL.has(job.status)) return;
@@ -447,15 +457,16 @@ export class JobManager {
     let reconnectTimer: NodeJS.Timeout | undefined;
     let socket: WebSocket | undefined;
     const connect = async () => {
-      if (active.closed || TERMINAL.has(job.status)) return;
+      if (!this.isCurrent(job, active) || TERMINAL.has(job.status)) return;
       try {
         await this.ensureApproved(job, definition);
       } catch (error) {
-        await this.queue(job, () => this.fail(job, boundedError(error)));
+        await this.queue(job, active, () =>
+          this.fail(job, boundedError(error)),
+        );
         return;
       }
-      if (active.closed || this.shuttingDown || TERMINAL.has(job.status))
-        return;
+      if (!this.isCurrent(job, active) || TERMINAL.has(job.status)) return;
       const url = withResumeCursor(
         definition.url,
         definition.resumeQuery,
@@ -468,7 +479,7 @@ export class JobManager {
         lookup: pinnedLookup(job.approvedAddresses ?? []),
       });
       socket.on("message", (message: RawData, binary: boolean) => {
-        void this.queue(job, async () => {
+        void this.queue(job, active, async () => {
           failures = 0;
           const data = binary
             ? new Uint8Array(message as Buffer)
@@ -477,7 +488,7 @@ export class JobManager {
         });
       });
       socket.on("close", () => {
-        if (active.closed || TERMINAL.has(job.status)) return;
+        if (!this.isCurrent(job, active) || TERMINAL.has(job.status)) return;
         const base = Math.min(30_000, 500 * 2 ** Math.min(failures++, 6));
         reconnectTimer = setTimeout(
           connect,
@@ -487,7 +498,7 @@ export class JobManager {
       socket.on(
         "error",
         () =>
-          void this.queue(job, () =>
+          void this.queue(job, active, () =>
             this.ingest(job, "system", "websocket connection error", false),
           ),
       );
@@ -507,13 +518,12 @@ export class JobManager {
     let controller: AbortController | undefined;
     let failures = 0;
     const poll = async () => {
-      if (active.closed || TERMINAL.has(job.status)) return;
+      if (!this.isCurrent(job, active) || TERMINAL.has(job.status)) return;
       controller = new AbortController();
       let dispatcher: Agent | undefined;
       try {
         await this.ensureApproved(job, definition);
-        if (active.closed || this.shuttingDown || TERMINAL.has(job.status))
-          return;
+        if (!this.isCurrent(job, active) || TERMINAL.has(job.status)) return;
         dispatcher = new Agent({
           connect: { lookup: pinnedLookup(job.approvedAddresses ?? []) },
         });
@@ -547,12 +557,12 @@ export class JobManager {
             : new TextDecoder("utf-8", { fatal: false }).decode(
                 data as Uint8Array,
               );
-        await this.queue(job, () =>
+        await this.queue(job, active, () =>
           this.ingest(job, "poll", input, binary && !oversize, oversize),
         );
       } catch (error) {
-        if (!active.closed)
-          await this.queue(job, () =>
+        if (this.isCurrent(job, active))
+          await this.queue(job, active, () =>
             this.ingest(
               job,
               "system",
@@ -564,7 +574,7 @@ export class JobManager {
       } finally {
         await dispatcher?.close().catch(() => undefined);
       }
-      if (!active.closed && !TERMINAL.has(job.status)) {
+      if (this.isCurrent(job, active) && !TERMINAL.has(job.status)) {
         const delay = Math.max(
           definition.intervalMs ?? 1_000,
           Math.min(30_000, 500 * 2 ** Math.min(failures, 6)),
@@ -817,7 +827,9 @@ export class JobManager {
     const priorStop = active.stop;
     const timer = setTimeout(
       () =>
-        this.queue(job, () => this.fail(job, "Job timeout/deadline exceeded.")),
+        this.queue(job, active, () =>
+          this.fail(job, "Job timeout/deadline exceeded."),
+        ),
       Math.max(0, expires - Date.now()),
     );
     active.stop = async () => {
@@ -829,6 +841,7 @@ export class JobManager {
   private newActive(job: JobRecord): ActiveJob {
     return {
       generation: job.attempt,
+      incarnation: job.incarnation,
       closed: false,
       queued: 0,
       stdoutBuffer: "",
@@ -838,25 +851,40 @@ export class JobManager {
     };
   }
 
-  private queue(job: JobRecord, operation: () => Promise<void>) {
-    const active = this.active.get(job.id);
-    if (
-      !active ||
-      active.closed ||
-      this.shuttingDown ||
-      active.generation !== job.attempt
-    )
-      return Promise.resolve();
+  private isCurrent(job: JobRecord, active: ActiveJob): boolean {
+    return (
+      this.jobs.get(job.id) === job &&
+      this.active.get(job.id) === active &&
+      !active.closed &&
+      !this.shuttingDown &&
+      active.generation === job.attempt &&
+      active.incarnation === job.incarnation
+    );
+  }
+
+  private queue(
+    job: JobRecord,
+    active: ActiveJob,
+    operation: () => Promise<void>,
+  ) {
+    if (!this.isCurrent(job, active)) return Promise.resolve();
     if (active.queued >= MAX_QUEUED_OPERATIONS) {
       active.closed = true;
-      active.chain = active.chain.then(
-        () => this.fail(job, "Job event ingress exceeded the bounded queue."),
-        () => this.fail(job, "Job event ingress exceeded the bounded queue."),
-      );
+      const fail = () =>
+        this.jobs.get(job.id) === job &&
+        this.active.get(job.id) === active &&
+        active.generation === job.attempt &&
+        active.incarnation === job.incarnation
+          ? this.fail(job, "Job event ingress exceeded the bounded queue.")
+          : Promise.resolve();
+      active.chain = active.chain.then(fail, fail);
       return active.chain;
     }
     active.queued++;
-    const run = () => operation().finally(() => active.queued--);
+    const run = () =>
+      (this.isCurrent(job, active) ? operation() : Promise.resolve()).finally(
+        () => active.queued--,
+      );
     active.chain = active.chain.then(run, run);
     return active.chain;
   }
@@ -899,7 +927,11 @@ export class JobManager {
       status: job.status,
       at,
       attempt: job.attempt,
+      createdAt: job.createdAt,
+      incarnation: job.incarnation,
       durationMs: Math.max(0, at - (job.startedAt ?? job.createdAt)),
+      ...(job.settledAt === undefined ? {} : { settledAt: job.settledAt }),
+      ...(job.error ? { error: job.error } : {}),
       ...(reason ? { reason } : {}),
       ...(event ? { event } : {}),
     };

@@ -54,5 +54,13 @@ test("Luna output must be an exact candidate permutation", () => {
   assert.deepEqual(parseTodoReorder('{"order":[3,2]}', [2, 3]), [3, 2]);
   assert.equal(parseTodoReorder('{"order":[3,3]}', [2, 3]), undefined);
   assert.equal(parseTodoReorder('{"order":[3,2,4]}', [2, 3]), undefined);
+  assert.equal(
+    parseTodoReorder('{"order":[3,2],"extra":true}', [2, 3]),
+    undefined,
+  );
+  assert.equal(
+    parseTodoReorder('{"order":[3,2]}'.padEnd(4_097, " "), [2, 3]),
+    undefined,
+  );
   assert.equal(parseTodoReorder("not json", [2, 3]), undefined);
 });

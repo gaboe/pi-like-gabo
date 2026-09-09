@@ -1,17 +1,30 @@
 import { strict as assert } from "node:assert";
 import { it } from "node:test";
 import { registerBackgroundSubagentService } from "../../../vendor/pi-tools/extensions/shared/background-subagent-protocol.ts";
-import { applyPreparationCAS } from "../enrichment.ts";
+import { applyPreparationCAS, resolveTodoReviewTarget } from "../enrichment.ts";
 import { JobsAdapter } from "../jobs-adapter.ts";
 import { aggregateOrchestratorMode } from "../orchestrator.ts";
 import { persistTodoSnapshot, TodoScheduler } from "../scheduler.ts";
 import { registerTodoAddCommand } from "../todo.ts";
-import { createTodoSnapshot, replayFromBranch, TODO_SNAPSHOT_TYPE } from "./replay.ts";
+import {
+  createTodoSnapshot,
+  replayFromBranch,
+  TODO_SNAPSHOT_TYPE,
+} from "./replay.ts";
 import { applyTaskMutation } from "./state-reducer.ts";
 import { __resetState, commitState, getState } from "./store.ts";
 import { applyJobState, recoverInterruptedPreparations } from "./waits.ts";
 
-const task = (id, status = "pending", extra = {}) => ({ id, subject: `Task ${id}`, status, ...extra });
+const task = (id, status = "pending", extra = {}) => ({
+  id,
+  subject: `Task ${id}`,
+  status,
+  ...(status === "completed" ? { result: "done", evidence: ["verified"] } : {}),
+  ...extra,
+});
+const currentTarget = resolveTodoReviewTarget(
+  `external checkout "${process.cwd()}"`,
+);
 const dossier = (summary) => ({
   status: "ready",
   summary,
@@ -26,7 +39,9 @@ const dossier = (summary) => ({
 });
 const deferred = () => {
   let resolve;
-  const promise = new Promise((done) => { resolve = done; });
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
   return { promise, resolve };
 };
 const bounded = async (promise, label) => {
@@ -35,7 +50,10 @@ const bounded = async (promise, label) => {
     return await Promise.race([
       promise,
       new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), 1_000);
+        timer = setTimeout(
+          () => reject(new Error(`Timed out waiting for ${label}`)),
+          1_000,
+        );
       }),
     ]);
   } finally {
@@ -51,6 +69,9 @@ class Bus {
     this.handlers.set(channel, handlers);
     return () => handlers.delete(handler);
   }
+  emit(channel, value) {
+    for (const handler of this.handlers.get(channel) ?? []) handler(value);
+  }
 }
 
 it("preserves manual off and sticky state through every canonical mutation, persistence, and replay", () => {
@@ -60,9 +81,19 @@ it("preserves manual off and sticky state through every canonical mutation, pers
   ]) {
     let state = {
       tasks: [
-        task(1, "pending", { metadata: { preparation: { status: "queued", version: 1, token: "prep-1" } } }),
+        task(1, "pending", {
+          metadata: {
+            preparation: { status: "queued", version: 1, token: "prep-1" },
+          },
+        }),
         task(2, "waiting:jobs", {
-          wait: { kind: "jobs", jobIds: ["job-1"], mode: "any", deadline: 10_000, settled: {} },
+          wait: {
+            kind: "jobs",
+            jobIds: ["job-1"],
+            mode: "any",
+            deadline: 10_000,
+            settled: {},
+          },
         }),
       ],
       nextId: 3,
@@ -73,27 +104,59 @@ it("preserves manual off and sticky state through every canonical mutation, pers
 
     state = applyTaskMutation(state, "create", { subject: "Created" }).state;
     preserved();
-    state = applyTaskMutation(state, "update", { id: 3, subject: "Updated" }).state;
+    state = applyTaskMutation(state, "update", {
+      id: 3,
+      subject: "Updated",
+    }).state;
     preserved();
     state = applyTaskMutation(state, "delete", { id: 3 }).state;
     preserved();
 
     const expectedPreparation = state.tasks[0];
-    state = applyPreparationCAS(state, expectedPreparation, { status: "ready", summary: "Prepared" });
+    state = applyPreparationCAS(state, expectedPreparation, {
+      status: "ready",
+      summary: "Prepared",
+    });
     preserved();
-    state = applyJobState(state, { id: "job-1", status: "wake", settledAt: 5_000 }, 5_000);
+    state = applyJobState(
+      state,
+      { id: "job-1", status: "wake", settledAt: 5_000 },
+      5_000,
+    );
     preserved();
-    state = applyTaskMutation(state, "update", { id: 1, status: "completed", result: "done", evidence: ["verified"] }).state;
-    state = applyTaskMutation(state, "update", { id: 2, status: "completed", result: "done", evidence: ["verified"] }).state;
+    state = applyTaskMutation(state, "update", {
+      id: 1,
+      status: "completed",
+      result: "done",
+      evidence: ["verified"],
+    }).state;
+    state = applyTaskMutation(state, "update", {
+      id: 2,
+      status: "completed",
+      result: "done",
+      evidence: ["verified"],
+    }).state;
     state = applyTaskMutation(state, "clear", {}).state;
     preserved();
 
     const entries = [];
-    persistTodoSnapshot({ appendEntry(type, data) { entries.push({ type, data }); } }, state);
+    persistTodoSnapshot(
+      {
+        appendEntry(type, data) {
+          entries.push({ type, data });
+        },
+      },
+      state,
+    );
     assert.deepEqual(entries.at(-1).data.orchestrator, orchestrator);
     const replayed = replayFromBranch({
       sessionManager: {
-        getBranch: () => entries.map(({ type, data }) => ({ type: "custom", customType: type, data })),
+        getBranch: () =>
+          entries.map(({ type, data }) => ({
+            type: "custom",
+            customType: type,
+            data,
+          })),
       },
     });
     assert.deepEqual(replayed.orchestrator, orchestrator);
@@ -102,45 +165,86 @@ it("preserves manual off and sticky state through every canonical mutation, pers
 
 it("recovers every running delegation independently and does not respawn ready dossiers", async () => {
   __resetState();
-  const originalReady = { status: "ready", version: 7, token: "ready", summary: "Keep me" };
+  const originalReady = {
+    status: "ready",
+    version: 7,
+    token: "ready",
+    summary: "Keep me",
+    analysisCwd: currentTarget.path,
+    analysisCwdIdentity: currentTarget.identity,
+  };
   const restored = replayFromBranch({
     sessionManager: {
-      getBranch: () => [{
-        type: "custom",
-        customType: TODO_SNAPSHOT_TYPE,
-        data: createTodoSnapshot({
-          tasks: [
-            task(1, "pending", { metadata: { delegation: { status: "running", subagentId: "worker-none" } } }),
-            task(2, "pending", { metadata: { preparation: originalReady, delegation: { status: "running", subagentId: "worker-ready" } } }),
-            task(3, "pending", { metadata: { preparation: { status: "queued", version: 2, token: "active" }, delegation: { status: "running", subagentId: "worker-active" } } }),
-          ],
-          nextId: 4,
-          revision: 10,
-          orchestrator: { setting: "off", sticky: false },
-        }),
-      }],
+      getBranch: () => [
+        {
+          type: "custom",
+          customType: TODO_SNAPSHOT_TYPE,
+          data: createTodoSnapshot({
+            tasks: [
+              task(1, "pending", {
+                metadata: {
+                  delegation: { status: "running", subagentId: "worker-none" },
+                },
+              }),
+              task(2, "pending", {
+                metadata: {
+                  preparation: originalReady,
+                  delegation: { status: "running", subagentId: "worker-ready" },
+                },
+              }),
+              task(3, "pending", {
+                metadata: {
+                  preparation: {
+                    status: "queued",
+                    version: 2,
+                    token: "active",
+                  },
+                  delegation: {
+                    status: "running",
+                    subagentId: "worker-active",
+                  },
+                },
+              }),
+            ],
+            nextId: 4,
+            revision: 10,
+            orchestrator: { setting: "off", sticky: false },
+          }),
+        },
+      ],
     },
   });
   commitState(restored);
 
   let spawnCalls = 0;
-  const unregister = registerBackgroundSubagentService({ async run() { spawnCalls++; throw new Error("must not respawn"); } });
-  const sent = deferred();
+  const unregister = registerBackgroundSubagentService({
+    async run() {
+      spawnCalls++;
+      throw new Error("must not respawn");
+    },
+  });
   const adapter = new JobsAdapter(new Bus());
   const scheduler = new TodoScheduler(
-    { appendEntry() {}, sendMessage() { sent.resolve(); } },
+    { appendEntry() {}, sendMessage() {} },
     adapter,
     () => {},
   );
   try {
-    scheduler.activate({});
-    await sent.promise;
+    scheduler.activate({ cwd: currentTarget.path });
+    await new Promise((resolve) => setImmediate(resolve));
     const [absent, ready, active] = getState().tasks;
-    for (const [recovered, worker] of [[absent, "worker-none"], [ready, "worker-ready"], [active, "worker-active"]]) {
+    for (const [recovered, worker] of [
+      [absent, "worker-none"],
+      [ready, "worker-ready"],
+      [active, "worker-active"],
+    ]) {
       assert.deepEqual(recovered.metadata.delegation, {
-        status: "interrupted",
+        status: "cancelling",
         subagentId: worker,
-        error: "Inspect current diff/worktree before redispatch",
+        error: "Cancel persisted worker before redispatch",
+        cancellationGeneration: 1,
+        cancellationTaskStatus: "pending",
+        cancellationAttempts: 0,
       });
     }
     assert.deepEqual(ready.metadata.preparation, originalReady);
@@ -154,17 +258,60 @@ it("recovers every running delegation independently and does not respawn ready d
   }
 });
 
-it("ignores completed and deleted sticky metadata before and after clear", () => {
-  const completed = task(1, "completed", { metadata: { orchestrator: { mode: "sticky", requiresOrchestration: true } } });
+it("cold replay recovers mixed delegation worker fields without dropping cancellation IDs", () => {
   const state = {
-    tasks: [completed, task(2, "deleted", { metadata: { orchestrator: { mode: "sticky" } } })],
+    tasks: [
+      task(1, "pending", {
+        metadata: {
+          delegation: {
+            status: "cancelling",
+            todoToken: "mixed-token",
+            cancellationGeneration: 7,
+            subagentIds: ["worker-a"],
+            cancellationIds: ["worker-b"],
+            subagentId: "worker-c",
+          },
+        },
+      }),
+    ],
+    nextId: 2,
+    revision: 3,
+  };
+  const recovered = recoverInterruptedPreparations(state);
+  assert.deepEqual(
+    recovered.cancellationIntents.map((intent) => intent.ids[0]),
+    ["worker-a", "worker-b", "worker-c"],
+  );
+  assert.deepEqual(
+    recovered.cancellationIntents.map((intent) => intent.generation),
+    [7, 7, 7],
+  );
+  assert.equal(recovered.tasks[0].metadata.delegation.status, "cancelling");
+});
+
+it("ignores completed and deleted sticky metadata before and after clear", () => {
+  const completed = task(1, "completed", {
+    metadata: { orchestrator: { mode: "sticky", requiresOrchestration: true } },
+  });
+  const state = {
+    tasks: [
+      completed,
+      task(2, "deleted", { metadata: { orchestrator: { mode: "sticky" } } }),
+    ],
     nextId: 3,
     revision: 2,
     orchestrator: { setting: "auto", sticky: false },
   };
   assert.equal(aggregateOrchestratorMode(state.tasks, "auto", false), "direct");
   const cleared = applyTaskMutation(state, "clear", {}).state;
-  assert.equal(aggregateOrchestratorMode(cleared.tasks, "auto", cleared.orchestrator.sticky), "direct");
+  assert.equal(
+    aggregateOrchestratorMode(
+      cleared.tasks,
+      "auto",
+      cleared.orchestrator.sticky,
+    ),
+    "direct",
+  );
 });
 
 it("does not restore global sticky from completed provisional work or assign direct pending work", async () => {
@@ -172,7 +319,12 @@ it("does not restore global sticky from completed provisional work or assign dir
   const sent = [];
   const adapter = new JobsAdapter(new Bus());
   const scheduler = new TodoScheduler(
-    { appendEntry() {}, sendMessage(message) { sent.push(message); } },
+    {
+      appendEntry() {},
+      sendMessage(message) {
+        sent.push(message);
+      },
+    },
     adapter,
     () => {},
   );
@@ -180,13 +332,25 @@ it("does not restore global sticky from completed provisional work or assign dir
     tasks: [
       task(1, "completed", {
         metadata: {
-          preparation: { status: "ready", token: "completed-token" },
+          preparation: {
+            status: "ready",
+            token: "completed-token",
+            analysisCwd: currentTarget.path,
+            analysisCwdIdentity: currentTarget.identity,
+          },
           orchestrator: { mode: "provisional", requiresOrchestration: true },
         },
       }),
       task(2, "pending", {
         metadata: {
-          preparation: { status: "ready", token: "direct-token" },
+          preparation: {
+            status: "ready",
+            token: "direct-token",
+            approval: "granted",
+            approvalRequired: false,
+            analysisCwd: currentTarget.path,
+            analysisCwdIdentity: currentTarget.identity,
+          },
           orchestrator: { mode: "direct", requiresOrchestration: false },
         },
       }),
@@ -195,7 +359,7 @@ it("does not restore global sticky from completed provisional work or assign dir
     revision: 1,
     orchestrator: { setting: "auto", sticky: false },
   });
-  scheduler.activate({});
+  scheduler.activate({ cwd: currentTarget.path });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(getState().orchestrator.sticky, false);
   assert.equal(getState().tasks[0].metadata.orchestrator.mode, "provisional");
@@ -226,7 +390,9 @@ it("starts raw model classification outside analyst queue and applies it before 
 
   registerTodoAddCommand(
     {
-      registerCommand(_name, definition) { command = definition; },
+      registerCommand(_name, definition) {
+        command = definition;
+      },
       appendEntry() {},
     },
     {
@@ -248,16 +414,23 @@ it("starts raw model classification outside analyst queue and applies it before 
           await releaseSecondClassifier.promise;
           return { requiresOrchestration: true, signals: ["raw-model"] };
         }
-        return { requiresOrchestration: !!prepared, signals: prepared ? ["prepared-model"] : [] };
+        return {
+          requiresOrchestration: !!prepared,
+          signals: prepared ? ["prepared-model"] : [],
+        };
       },
       onStateChanged: () => {
-        const second = getState().tasks.find((candidate) => candidate.description === "second queued analyst");
-        if ((second?.metadata?.preparation?.classifier?.status) === "raw") secondRawApplied.resolve();
-        if ((second?.metadata?.preparation?.classifier?.status) === "ready") secondPreparedApplied.resolve();
+        const second = getState().tasks.find(
+          (candidate) => candidate.description === "second queued analyst",
+        );
+        if (second?.metadata?.preparation?.classifier?.status === "raw")
+          secondRawApplied.resolve();
+        if (second?.metadata?.preparation?.classifier?.status === "ready")
+          secondPreparedApplied.resolve();
       },
     },
   );
-  const ctx = { ui: { notify() {} } };
+  const ctx = { cwd: process.cwd(), ui: { notify() {} } };
   await command.handler("add first queued analyst", ctx);
   await bounded(firstAnalystStarted.promise, "first analyst");
   await command.handler("add second queued analyst", ctx);
@@ -275,7 +448,10 @@ it("starts raw model classification outside analyst queue and applies it before 
   releaseFirstAnalyst.resolve();
   await bounded(secondAnalystStarted.promise, "second analyst");
   releaseSecondAnalyst.resolve();
-  await bounded(secondPreparedApplied.promise, "second prepared classification");
+  await bounded(
+    secondPreparedApplied.promise,
+    "second prepared classification",
+  );
   assert.deepEqual(calls, [
     { raw: "first queued analyst", phase: "raw" },
     { raw: "second queued analyst", phase: "raw" },

@@ -8,9 +8,18 @@ import {
 import {
   acquirePackageAssignmentLease,
   acquirePackageAssignmentLeaseAsync,
+  packageAssignmentError,
   registerPackageAssignmentGate,
 } from "../shared/assignment-gate-protocol.ts";
 import { spawnPackageAssignment } from "./index.ts";
+
+const testRequest = (overrides: Record<string, unknown> = {}) => ({
+  todoId: 1,
+  todoToken: "prep-1",
+  workerCwd: process.cwd(),
+  targetBinding: "a".repeat(64),
+  ...overrides,
+});
 
 test("package ownership requires the complete contract, id, and token trio", () => {
   assert.equal(
@@ -56,28 +65,107 @@ test("package ownership requires the complete contract, id, and token trio", () 
   );
 });
 
+test("package assignment protocol rejects requests without cwd or target binding", () => {
+  const unregister = registerPackageAssignmentGate(
+    () => undefined,
+    () => undefined,
+    () => undefined,
+  );
+  try {
+    assert.match(
+      String(
+        packageAssignmentError({ todoId: 1, todoToken: "prep-1" } as never),
+      ),
+      /canonical worker cwd/,
+    );
+    assert.match(
+      String(
+        packageAssignmentError({
+          todoId: 1,
+          todoToken: "prep-1",
+          workerCwd: process.cwd(),
+        } as never),
+      ),
+      /target binding/,
+    );
+    assert.match(
+      String(
+        acquirePackageAssignmentLease({
+          todoId: 1,
+          todoToken: "prep-1",
+        } as never),
+      ),
+      /canonical worker cwd/,
+    );
+  } finally {
+    unregister();
+  }
+});
+
+test("package assignment remains a per-TODO mutex when target fields differ", () => {
+  const unregister = registerPackageAssignmentGate(
+    () => undefined,
+    () => undefined,
+    () => undefined,
+  );
+  try {
+    const first = acquirePackageAssignmentLease(
+      testRequest({ targetBinding: "a".repeat(64) }),
+    );
+    assert.notEqual(typeof first, "string");
+    const second = acquirePackageAssignmentLease(
+      testRequest({ targetBinding: "b".repeat(64), workerCwd: "/tmp/other" }),
+    );
+    assert.match(String(second), /already spawning/);
+    if (typeof first !== "string") first.close();
+    const replacement = acquirePackageAssignmentLease(
+      testRequest({ targetBinding: "b".repeat(64), workerCwd: "/tmp/other" }),
+    );
+    assert.notEqual(typeof replacement, "string");
+    if (typeof replacement !== "string") replacement.close();
+  } finally {
+    unregister();
+  }
+});
+
+test("package assignment authorization fails closed without a captured authorizer", () => {
+  const unregister = (registerPackageAssignmentGate as unknown as Function)(
+    () => undefined,
+  );
+  try {
+    const lease = acquirePackageAssignmentLease(testRequest());
+    assert.notEqual(typeof lease, "string");
+    if (typeof lease === "string") throw new Error(lease);
+    assert.equal(
+      lease.authorize("worker-without-authorizer"),
+      "package_handoff assignment authorizer unavailable.",
+    );
+  } finally {
+    unregister();
+  }
+});
+
 test("package spawn revalidates at manager and spawn latches", async () => {
   let allowed = true;
-  const unregister = registerPackageAssignmentGate(() =>
-    allowed ? undefined : "assignment stale",
+  const unregister = registerPackageAssignmentGate(
+    () => (allowed ? undefined : "assignment stale"),
+    () => undefined,
+    () => undefined,
   );
   try {
     let spawnCalls = 0;
     await assert.rejects(
-      spawnPackageAssignment(
-        { todoId: 1, todoToken: "prep-1" },
-        {
-          async getManager() {
-            allowed = false;
-            return {};
-          },
-          async spawn() {
-            spawnCalls++;
-            return { id: "sa-never" };
-          },
-          async cancel() {},
+      spawnPackageAssignment(testRequest(), {
+        async getManager() {
+          allowed = false;
+          return {};
         },
-      ),
+        async spawn() {
+          spawnCalls++;
+          return { id: "sa-never" };
+        },
+        async cancel() {},
+      }),
       /assignment stale/,
     );
     assert.equal(spawnCalls, 0);
@@ -85,32 +173,29 @@ test("package spawn revalidates at manager and spawn latches", async () => {
     allowed = true;
     const sequence: string[] = [];
     await assert.rejects(
-      spawnPackageAssignment(
-        { todoId: 1, todoToken: "prep-1" },
-        {
-          async getManager() {
-            sequence.push("manager");
-            return {};
-          },
-          async spawn() {
-            sequence.push("spawn");
-            allowed = false;
-            return { id: "sa-created" };
-          },
-          async cancel(_manager, id) {
-            sequence.push(`cancel:${id}`);
-          },
-          onPending() {
-            sequence.push("pending");
-          },
-          onRejected() {
-            sequence.push("rejected");
-          },
-          onRelease() {
-            sequence.push("release");
-          },
+      spawnPackageAssignment(testRequest(), {
+        async getManager() {
+          sequence.push("manager");
+          return {};
         },
-      ),
+        async spawn() {
+          sequence.push("spawn");
+          allowed = false;
+          return { id: "sa-created" };
+        },
+        async cancel(_manager, id) {
+          sequence.push(`cancel:${id}`);
+        },
+        onPending() {
+          sequence.push("pending");
+        },
+        onRejected() {
+          sequence.push("rejected");
+        },
+        onRelease() {
+          sequence.push("release");
+        },
+      }),
       /assignment stale/,
     );
     assert.deepEqual(sequence, [
@@ -126,10 +211,72 @@ test("package spawn revalidates at manager and spawn latches", async () => {
   }
 });
 
-test("synchronous package assignment acquisition remains exclusive", () => {
-  const unregister = registerPackageAssignmentGate(() => undefined);
+test("package spawn carries the canonical worker cwd and target binding through authorization", async () => {
+  let seenRequest: { workerCwd?: string; targetBinding?: string } | undefined;
+  let seenAuthorization:
+    | {
+        todoId?: number;
+        todoToken?: string;
+        subagentId?: string;
+        workerCwd?: string;
+        targetBinding?: string;
+      }
+    | undefined;
+  const unregister = registerPackageAssignmentGate(
+    (request) => {
+      seenRequest = request;
+      return undefined;
+    },
+    (request) => {
+      seenAuthorization = request;
+    },
+    () => undefined,
+  );
   try {
-    const request = { todoId: 1, todoToken: "prep-1" };
+    const snapshot = await spawnPackageAssignment(
+      {
+        todoId: 1,
+        todoToken: "prep-1",
+        workerCwd: "/validated/checkout",
+        targetBinding: "a".repeat(64),
+      },
+      {
+        async getManager() {
+          return {};
+        },
+        async spawn() {
+          return { id: "sa-bound" };
+        },
+        async cancel() {},
+      },
+    );
+    assert.equal(snapshot.id, "sa-bound");
+    assert.deepEqual(seenRequest, {
+      todoId: 1,
+      todoToken: "prep-1",
+      workerCwd: "/validated/checkout",
+      targetBinding: "a".repeat(64),
+    });
+    assert.deepEqual(seenAuthorization, {
+      todoId: 1,
+      todoToken: "prep-1",
+      subagentId: "sa-bound",
+      workerCwd: "/validated/checkout",
+      targetBinding: "a".repeat(64),
+    });
+  } finally {
+    unregister();
+  }
+});
+
+test("synchronous package assignment acquisition remains exclusive", () => {
+  const unregister = registerPackageAssignmentGate(
+    () => undefined,
+    () => undefined,
+    () => undefined,
+  );
+  try {
+    const request = testRequest();
     const first = acquirePackageAssignmentLease(request);
     assert.equal(typeof first, "object");
     assert.match(
@@ -146,9 +293,13 @@ test("synchronous package assignment acquisition remains exclusive", () => {
 });
 
 test("async package assignment acquisition wakes three waiters FIFO", async () => {
-  const unregister = registerPackageAssignmentGate(() => undefined);
+  const unregister = registerPackageAssignmentGate(
+    () => undefined,
+    () => undefined,
+    () => undefined,
+  );
   try {
-    const request = { todoId: 1, todoToken: "prep-1" };
+    const request = testRequest();
     const holder = await acquirePackageAssignmentLeaseAsync(request);
     assert.notEqual(typeof holder, "string");
     if (typeof holder === "string") throw new Error(holder);
@@ -170,9 +321,13 @@ test("async package assignment acquisition wakes three waiters FIFO", async () =
 });
 
 test("aborting the middle package assignment waiter preserves FIFO", async () => {
-  const unregister = registerPackageAssignmentGate(() => undefined);
+  const unregister = registerPackageAssignmentGate(
+    () => undefined,
+    () => undefined,
+    () => undefined,
+  );
   try {
-    const request = { todoId: 1, todoToken: "prep-1" };
+    const request = testRequest();
     const holder = await acquirePackageAssignmentLeaseAsync(request);
     assert.notEqual(typeof holder, "string");
     if (typeof holder === "string") throw new Error(holder);
@@ -207,8 +362,12 @@ test("aborting the middle package assignment waiter preserves FIFO", async () =>
 });
 
 test("gate generation change invalidates holder and queued waiters", async () => {
-  const unregisterOld = registerPackageAssignmentGate(() => undefined);
-  const request = { todoId: 1, todoToken: "prep-1" };
+  const unregisterOld = registerPackageAssignmentGate(
+    () => undefined,
+    () => undefined,
+    () => undefined,
+  );
+  const request = testRequest();
   const holder = await acquirePackageAssignmentLeaseAsync(request);
   assert.notEqual(typeof holder, "string");
   if (typeof holder === "string") throw new Error(holder);
@@ -216,6 +375,8 @@ test("gate generation change invalidates holder and queued waiters", async () =>
 
   const unregisterNew = registerPackageAssignmentGate(
     () => "package_handoff assignment gate is off.",
+    () => undefined,
+    () => undefined,
   );
   try {
     assert.match(String(await waiter), /assignment gate is off/);
@@ -232,6 +393,7 @@ test("failed first spawn releases the next queued package assignment", async () 
   const unregister = registerPackageAssignmentGate(
     () => undefined,
     ({ subagentId }) => authorized.push(subagentId),
+    () => undefined,
   );
   let spawnStarted!: () => void;
   const started = new Promise<void>((resolve) => {
@@ -242,7 +404,7 @@ test("failed first spawn releases the next queued package assignment", async () 
     failSpawn = reject;
   });
   try {
-    const request = { todoId: 1, todoToken: "prep-1" };
+    const request = testRequest();
     const first = spawnPackageAssignment(request, {
       async getManager() {
         return {};
@@ -279,6 +441,7 @@ test("batched disjoint package workers queue only their spawn handshakes", async
   const unregister = registerPackageAssignmentGate(
     () => undefined,
     ({ subagentId }) => authorized.push(subagentId),
+    () => undefined,
   );
   let firstStarted!: () => void;
   const started = new Promise<void>((resolve) => {
@@ -289,7 +452,7 @@ test("batched disjoint package workers queue only their spawn handshakes", async
     releaseFirst = resolve;
   });
   try {
-    const request = { todoId: 1, todoToken: "prep-1" };
+    const request = testRequest();
     const first = spawnPackageAssignment(request, {
       async getManager() {
         return {};
@@ -332,20 +495,18 @@ test("package spawn authorizes one current gate generation", async () => {
   const unregister = registerPackageAssignmentGate(
     () => undefined,
     ({ subagentId }) => authorized.push(subagentId),
+    () => undefined,
   );
   try {
-    const snapshot = await spawnPackageAssignment(
-      { todoId: 1, todoToken: "prep-1" },
-      {
-        async getManager() {
-          return {};
-        },
-        async spawn() {
-          return { id: "sa-1" };
-        },
-        async cancel() {},
+    const snapshot = await spawnPackageAssignment(testRequest(), {
+      async getManager() {
+        return {};
       },
-    );
+      async spawn() {
+        return { id: "sa-1" };
+      },
+      async cancel() {},
+    });
     assert.equal(snapshot.id, "sa-1");
     assert.deepEqual(authorized, ["sa-1"]);
   } finally {
@@ -353,8 +514,130 @@ test("package spawn authorizes one current gate generation", async () => {
   }
 });
 
+test("post-authorization start failure invokes durable rollback before manager cancel", async () => {
+  const events: string[] = [];
+  const unregister = registerPackageAssignmentGate(
+    () => undefined,
+    () => events.push("authorize"),
+    ({ subagentId }, reason) => {
+      events.push(`rollback:${subagentId}:${reason}`);
+    },
+  );
+  try {
+    await assert.rejects(
+      spawnPackageAssignment(
+        testRequest({ todoId: 24, todoToken: "prep-24" }),
+        {
+          async getManager() {
+            return {};
+          },
+          async spawn() {
+            return { id: "sa-rollback" };
+          },
+          async start() {
+            throw new Error("start rejected");
+          },
+          async cancel() {
+            events.push("cancel");
+          },
+        },
+      ),
+      /start rejected/,
+    );
+    assert.deepEqual(events, [
+      "authorize",
+      "rollback:sa-rollback:start rejected",
+      "cancel",
+    ]);
+  } finally {
+    unregister();
+  }
+});
+
+test("package spawn revalidates the assignment lease around start", async () => {
+  let allowed = true;
+  const events: string[] = [];
+  const unregister = registerPackageAssignmentGate(
+    () => (allowed ? undefined : "assignment stale during start"),
+    () => events.push("authorize"),
+    ({ subagentId }, reason) => events.push(`rollback:${subagentId}:${reason}`),
+  );
+  try {
+    await assert.rejects(
+      spawnPackageAssignment(testRequest(), {
+        async getManager() {
+          return {};
+        },
+        async spawn() {
+          return { id: "sa-start-stale" };
+        },
+        async start() {
+          allowed = false;
+        },
+        async cancel(_manager, id) {
+          events.push(`cancel:${id}`);
+        },
+      }),
+      /assignment stale during start/,
+    );
+    assert.deepEqual(events, [
+      "authorize",
+      "rollback:sa-start-stale:assignment stale during start",
+      "cancel:sa-start-stale",
+    ]);
+  } finally {
+    unregister();
+  }
+});
+
+test("abort after provisional authorization rolls back the published owner", async () => {
+  const events: string[] = [];
+  const controller = new AbortController();
+  const unregister = registerPackageAssignmentGate(
+    () => undefined,
+    () => events.push("authorize"),
+    ({ subagentId }, reason) => {
+      events.push(`rollback:${subagentId}:${reason}`);
+    },
+  );
+  try {
+    await assert.rejects(
+      spawnPackageAssignment(
+        testRequest({ todoId: 25, todoToken: "prep-25" }),
+        {
+          async getManager() {
+            return {};
+          },
+          async spawn() {
+            return { id: "sa-abort" };
+          },
+          async start() {
+            controller.abort();
+          },
+          async cancel() {
+            events.push("cancel");
+          },
+        },
+        controller.signal,
+      ),
+      /aborted/,
+    );
+    assert.deepEqual(events, [
+      "authorize",
+      "rollback:sa-abort:package_handoff assignment acquisition was aborted.",
+      "cancel",
+    ]);
+  } finally {
+    unregister();
+  }
+});
+
 test("abort while manager or prepare is blocked cannot authorize or start a worker", async () => {
-  const unregister = registerPackageAssignmentGate(() => undefined);
+  const unregister = registerPackageAssignmentGate(
+    () => undefined,
+    () => undefined,
+    () => undefined,
+  );
   try {
     for (const phase of ["manager", "prepare"] as const) {
       const controller = new AbortController();
@@ -372,9 +655,10 @@ test("abort while manager or prepare is blocked cannot authorize or start a work
       const unregisterAuthorizer = registerPackageAssignmentGate(
         () => undefined,
         () => authorizations++,
+        () => undefined,
       );
       const spawning = spawnPackageAssignment(
-        { todoId: 20, todoToken: `prep-${phase}` },
+        testRequest({ todoId: 20, todoToken: `prep-${phase}` }),
         {
           async getManager() {
             if (phase === "manager") {
@@ -427,12 +711,13 @@ test("failed cancellation leaves rejected unauthorized candidate tracked", async
   const unregister = registerPackageAssignmentGate(
     () => (allowed ? undefined : "assignment stale"),
     ({ subagentId }) => authorized.push(subagentId),
+    () => undefined,
   );
   let starts = 0;
   try {
     await assert.rejects(
       spawnPackageAssignment(
-        { todoId: 21, todoToken: "prep-21" },
+        testRequest({ todoId: 21, todoToken: "prep-21" }),
         {
           async getManager() {
             return {};
@@ -467,11 +752,12 @@ test("observer failures cannot leak lease or fail an accepted started worker", a
   const unregister = registerPackageAssignmentGate(
     () => undefined,
     ({ subagentId }) => authorized.push(subagentId),
+    () => undefined,
   );
   try {
     let started = false;
     const first = await spawnPackageAssignment(
-      { todoId: 22, todoToken: "prep-22" },
+      testRequest({ todoId: 22, todoToken: "prep-22" }),
       {
         async getManager() {
           return {};
@@ -493,10 +779,12 @@ test("observer failures cannot leak lease or fail an accepted started worker", a
     );
     assert.equal(first.id, "sa-observer");
     assert.equal(started, true);
-    const next = await acquirePackageAssignmentLeaseAsync({
-      todoId: 22,
-      todoToken: "prep-22",
-    });
+    const next = await acquirePackageAssignmentLeaseAsync(
+      testRequest({
+        todoId: 22,
+        todoToken: "prep-22",
+      }),
+    );
     assert.notEqual(typeof next, "string");
     if (typeof next !== "string") next.close();
     assert.deepEqual(authorized, ["sa-observer"]);
@@ -506,10 +794,14 @@ test("observer failures cannot leak lease or fail an accepted started worker", a
 });
 
 test("prepare and start failures each release the FIFO next waiter", async () => {
-  const unregister = registerPackageAssignmentGate(() => undefined);
+  const unregister = registerPackageAssignmentGate(
+    () => undefined,
+    () => undefined,
+    () => undefined,
+  );
   try {
     for (const phase of ["prepare", "start"] as const) {
-      const request = { todoId: 23, todoToken: `prep-${phase}` };
+      const request = testRequest({ todoId: 23, todoToken: `prep-${phase}` });
       let reached!: () => void;
       const waiting = new Promise<void>((resolve) => {
         reached = resolve;

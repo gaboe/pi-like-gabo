@@ -1216,33 +1216,36 @@ export default function askUser(
       );
       const uiSignal = deadline.signal;
       let cancelled = false;
-      let result = await new Promise<SelectionResult>((resolve, reject) => {
-        let settled = false;
-        const finish = (value: SelectionResult) => {
-          if (settled) return;
-          settled = true;
-          uiSignal.removeEventListener("abort", cancel);
-          resolve(value);
-        };
-        const cancel = () => {
-          cancelled = true;
-          finish(null);
-        };
-
-        uiSignal.addEventListener("abort", cancel, { once: true });
-        if (uiSignal.aborted) {
-          cancel();
-        } else {
-          void showBlockedQuestion(uiSignal).then(finish, (error) => {
+      let result: SelectionResult;
+      try {
+        result = await new Promise<SelectionResult>((resolve, reject) => {
+          let settled = false;
+          const finish = (value: SelectionResult) => {
             if (settled) return;
             settled = true;
             uiSignal.removeEventListener("abort", cancel);
-            reject(error);
-          });
-        }
-      });
+            resolve(value);
+          };
+          const cancel = () => {
+            cancelled = true;
+            finish(null);
+          };
 
-      deadline.cleanup();
+          uiSignal.addEventListener("abort", cancel, { once: true });
+          if (uiSignal.aborted) {
+            cancel();
+          } else {
+            void showBlockedQuestion(uiSignal).then(finish, (error) => {
+              if (settled) return;
+              settled = true;
+              uiSignal.removeEventListener("abort", cancel);
+              reject(error);
+            });
+          }
+        });
+      } finally {
+        deadline.cleanup();
+      }
       if (deadline.parentAborted()) {
         return reply(buildAskUserResultMessage({ kind: "cancelled" }));
       }

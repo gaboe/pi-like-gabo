@@ -16,7 +16,9 @@ export default function fleetNavigation(pi: ExtensionAPI) {
     fleet?.dispose();
     fleet = undefined;
     if (ctx.mode !== "tui") return;
-    fleet = new FleetView(ctx.ui, (request) => openFleetItem(pi.events, request));
+    fleet = new FleetView(ctx.ui, (request) =>
+      openFleetItem(pi.events, request),
+    );
     stopState = onFleetState(pi.events, (state) => fleet?.setState(state));
     queryFleet(pi.events);
   });

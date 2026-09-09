@@ -54,7 +54,10 @@ describe("expandSkillReferences", () => {
   it("expands one skill in Pi's native compact block format", () => {
     const result = expandSkillReferences("Use $skill-a please", registry);
 
-    assert.deepEqual(result.loaded.map((skill) => skill.name), ["skill-a"]);
+    assert.deepEqual(
+      result.loaded.map((skill) => skill.name),
+      ["skill-a"],
+    );
     assert.match(result.text, /^<skill name="skill-a"/);
     assert.match(result.text, /# Skill A/);
     assert.match(result.text, /\n\nUse \[skill: skill-a\] please$/);
@@ -64,8 +67,14 @@ describe("expandSkillReferences", () => {
     const result = expandSkillReferences("$skill-a then $skill-b", registry);
 
     assert.equal(result.text.match(/<skill name=/g).length, 1);
-    assert.match(result.text, /References for this skill are relative to .*skill-a\./);
-    assert.match(result.text, /References for this skill are relative to .*skill-b\./);
+    assert.match(
+      result.text,
+      /References for this skill are relative to .*skill-a\./,
+    );
+    assert.match(
+      result.text,
+      /References for this skill are relative to .*skill-b\./,
+    );
     assert.match(result.text, /# Skill A/);
     assert.match(result.text, /# Skill B/);
     assert.match(
@@ -75,7 +84,8 @@ describe("expandSkillReferences", () => {
   });
 
   it("preserves multiline prompt formatting outside removed references", () => {
-    const input = "Use $skill-a\n\n```ts\nconst  value = 1;\n```\n\nKeep  spacing.";
+    const input =
+      "Use $skill-a\n\n```ts\nconst  value = 1;\n```\n\nKeep  spacing.";
     const result = expandSkillReferences(input, registry);
 
     assert.match(
@@ -107,7 +117,10 @@ describe("expandSkillReferences", () => {
     const dir = join(root, "temporary");
     mkdirSync(dir);
     const file = join(dir, "SKILL.md");
-    writeFileSync(file, "---\nname: temporary\ndescription: Temp\n---\n\n# Temp");
+    writeFileSync(
+      file,
+      "---\nname: temporary\ndescription: Temp\n---\n\n# Temp",
+    );
     const temporaryRegistry = buildSkillRegistry([
       skillCommand({ name: "temporary", path: file, baseDir: dir }),
     ]);
@@ -140,7 +153,10 @@ describe("expandSkillReferences", () => {
     const dir = join(root, 'skill-&-quote-"');
     mkdirSync(dir);
     const file = join(dir, "SKILL.md");
-    writeFileSync(file, "---\nname: special\ndescription: Special\n---\n\n# Special");
+    writeFileSync(
+      file,
+      "---\nname: special\ndescription: Special\n---\n\n# Special",
+    );
     const specialRegistry = buildSkillRegistry([
       skillCommand({ name: "special", path: file, baseDir: dir }),
     ]);

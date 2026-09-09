@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   isAllowedOpenAiSubagentModel,
@@ -12,8 +13,20 @@ for (const model of [
 ])
   test(`${model} is allowed`, () =>
     assert.equal(isAllowedOpenAiSubagentModel(model), true));
-test("rejects Spark, aliases, and other providers", () => {
+test("TODO completion review uses the allowed canonical Luna model", () => {
+  const source = readFileSync(
+    new URL("../../../../extensions/todo/state/completion.ts", import.meta.url),
+    "utf8",
+  );
+  const match = /export const COMPLETION_REVIEW_MODEL = "([^"]+)"/.exec(source);
+  assert.ok(match);
+  assert.equal(match[1], "openai-codex/gpt-5.6-luna");
+  assert.equal(isAllowedOpenAiSubagentModel(match[1]), true);
+});
+
+test("rejects aliases and other providers", () => {
   for (const model of [
+    "openai-codex/gpt-5.3-codex-spark",
     "gpt-5.5-legacy",
     "gpt-5.6-terra",
     "openai/gpt-5.6-terra",

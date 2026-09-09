@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import test from "node:test";
@@ -19,10 +32,20 @@ async function temporary(t, prefix = "compact-artifacts-") {
 }
 
 async function assertOwnedUsageWithinCap(root) {
-  const names = (await readdir(root)).filter((name) => /^[a-f0-9]{24}\.txt$|^\.compact-tools-[a-f0-9]{24}-[a-f0-9]{16}\.tmp$/.test(name));
+  const names = (await readdir(root)).filter((name) =>
+    /^[a-f0-9]{24}\.txt$|^\.compact-tools-[a-f0-9]{24}-[a-f0-9]{16}\.tmp$/.test(
+      name,
+    ),
+  );
   const infos = await Promise.all(names.map((name) => stat(join(root, name))));
-  assert.ok(names.length <= MAX_ARTIFACT_COUNT, `${names.length} owned files exceeds cap`);
-  assert.ok(infos.reduce((sum, info) => sum + info.size, 0) <= MAX_ARTIFACT_TOTAL_BYTES, "owned bytes exceed cap");
+  assert.ok(
+    names.length <= MAX_ARTIFACT_COUNT,
+    `${names.length} owned files exceeds cap`,
+  );
+  assert.ok(
+    infos.reduce((sum, info) => sum + info.size, 0) <= MAX_ARTIFACT_TOTAL_BYTES,
+    "owned bytes exceed cap",
+  );
 }
 
 test("writes exact private recoverable text atomically and dedupes", async (t) => {
@@ -32,7 +55,10 @@ test("writes exact private recoverable text atomically and dedupes", async (t) =
   const artifact = await store.persist("call-1", text);
   assert.ok(artifact);
   assert.equal(await readFile(artifact.path, "utf8"), text);
-  assert.equal(artifact.sha256, createHash("sha256").update(text).digest("hex"));
+  assert.equal(
+    artifact.sha256,
+    createHash("sha256").update(text).digest("hex"),
+  );
   assert.equal((await stat(root)).mode & 0o777, 0o700);
   assert.equal((await stat(artifact.path)).mode & 0o777, 0o600);
   assert.equal((await store.persist("call-1", text)).path, artifact.path);
@@ -53,7 +79,10 @@ test("cache identity includes the full artifact directory", async (t) => {
   const root = await temporary(t);
   const left = new ToolResultArtifacts(join(root, "left"));
   const right = new ToolResultArtifacts(join(root, "right"));
-  const [a, b] = await Promise.all([left.persist("same", "text"), right.persist("same", "text")]);
+  const [a, b] = await Promise.all([
+    left.persist("same", "text"),
+    right.persist("same", "text"),
+  ]);
   assert.ok(a && b);
   assert.notEqual(a.id, b.id);
   assert.notEqual(a.path, b.path);
@@ -108,18 +137,31 @@ test("secures exact reused bytes through the opened handle and rejects hardlinks
 test("fails open for cap and unsafe/unwritable paths", async (t) => {
   const root = await temporary(t);
   const store = new ToolResultArtifacts(root);
-  assert.equal(await store.persist("large", "x".repeat(MAX_ARTIFACT_BYTES + 1)), undefined);
+  assert.equal(
+    await store.persist("large", "x".repeat(MAX_ARTIFACT_BYTES + 1)),
+    undefined,
+  );
   const file = join(root, "not-a-directory");
   await writeFile(file, "x");
-  assert.equal(await new ToolResultArtifacts(file).persist("bad", "text"), undefined);
+  assert.equal(
+    await new ToolResultArtifacts(file).persist("bad", "text"),
+    undefined,
+  );
 });
 
 test("100 concurrent identical writes converge on one exact artifact", async (t) => {
   const root = await temporary(t);
   const store = new ToolResultArtifacts(root);
-  const artifacts = await Promise.all(Array.from({ length: 100 }, () => store.persist("same", "concurrent")));
-  assert.ok(artifacts.every((artifact) => artifact?.path === artifacts[0]?.path));
-  assert.equal((await readdir(root)).filter((name) => name.endsWith(".txt")).length, 1);
+  const artifacts = await Promise.all(
+    Array.from({ length: 100 }, () => store.persist("same", "concurrent")),
+  );
+  assert.ok(
+    artifacts.every((artifact) => artifact?.path === artifacts[0]?.path),
+  );
+  assert.equal(
+    (await readdir(root)).filter((name) => name.endsWith(".txt")).length,
+    1,
+  );
   assert.equal(await readFile(artifacts[0].path, "utf8"), "concurrent");
 });
 
@@ -128,7 +170,8 @@ test("cleanup reports evictions, clears cache, and permits exact repeat", async 
   const store = new ToolResultArtifacts(root);
   const first = await store.persist("call-0", "0");
   assert.ok(first);
-  for (let i = 1; i <= MAX_ARTIFACT_COUNT; i++) assert.ok(await store.persist(`call-${i}`, `${i}`));
+  for (let i = 1; i <= MAX_ARTIFACT_COUNT; i++)
+    assert.ok(await store.persist(`call-${i}`, `${i}`));
   await assert.rejects(lstat(first.path), { code: "ENOENT" });
   const repeated = await store.persist("call-0", "0");
   assert.ok(repeated);
@@ -140,20 +183,27 @@ test("cleanup reports evictions, clears cache, and permits exact repeat", async 
 test("batch cleanup returns only artifacts that still exist", async (t) => {
   const root = await temporary(t);
   const store = new ToolResultArtifacts(root);
-  const artifacts = await store.persistBatch(Array.from({ length: MAX_ARTIFACT_COUNT + 1 }, (_, index) => ({
-    identity: `call-${index}`,
-    text: `${index}`,
-  })));
+  const artifacts = await store.persistBatch(
+    Array.from({ length: MAX_ARTIFACT_COUNT + 1 }, (_, index) => ({
+      identity: `call-${index}`,
+      text: `${index}`,
+    })),
+  );
   assert.equal(artifacts.filter(Boolean).length, MAX_ARTIFACT_COUNT);
-  for (const artifact of artifacts.filter(Boolean)) assert.ok((await lstat(artifact.path)).isFile());
+  for (const artifact of artifacts.filter(Boolean))
+    assert.ok((await lstat(artifact.path)).isFile());
 });
 
 test("reserves hard caps before writes across oversized concurrent batches", async (t) => {
   const root = await temporary(t);
   let releasePause;
   let reportPaused;
-  const pause = new Promise((resolve) => { releasePause = resolve; });
-  const paused = new Promise((resolve) => { reportPaused = resolve; });
+  const pause = new Promise((resolve) => {
+    releasePause = resolve;
+  });
+  const paused = new Promise((resolve) => {
+    reportPaused = resolve;
+  });
   let shouldPause = true;
   const observe = async () => {
     await assertOwnedUsageWithinCap(root);
@@ -163,13 +213,21 @@ test("reserves hard caps before writes across oversized concurrent batches", asy
       await pause;
     }
   };
-  const hooks = { beforeWrite: () => assertOwnedUsageWithinCap(root), beforeRename: observe };
-  const items = (prefix) => Array.from({ length: 20 }, (_, index) => ({
-    identity: `${prefix}-${index}`,
-    text: "x".repeat(MAX_ARTIFACT_BYTES),
-  }));
-  const first = new ToolResultArtifacts(root, { hooks }).persistBatch(items("first"));
-  const second = new ToolResultArtifacts(root, { hooks }).persistBatch(items("second"));
+  const hooks = {
+    beforeWrite: () => assertOwnedUsageWithinCap(root),
+    beforeRename: observe,
+  };
+  const items = (prefix) =>
+    Array.from({ length: 20 }, (_, index) => ({
+      identity: `${prefix}-${index}`,
+      text: "x".repeat(MAX_ARTIFACT_BYTES),
+    }));
+  const first = new ToolResultArtifacts(root, { hooks }).persistBatch(
+    items("first"),
+  );
+  const second = new ToolResultArtifacts(root, { hooks }).persistBatch(
+    items("second"),
+  );
   await paused;
   await assertOwnedUsageWithinCap(root);
   releasePause();
@@ -182,19 +240,42 @@ test("reserves hard caps before writes across oversized concurrent batches", asy
 test("write and rename failures always remove owned temp files", async (t) => {
   for (const failure of ["beforeWrite", "beforeRename"]) {
     const root = await temporary(t, `compact-${failure}-`);
-    const store = new ToolResultArtifacts(root, { hooks: { [failure]: () => { throw new Error(failure); } } });
+    const store = new ToolResultArtifacts(root, {
+      hooks: {
+        [failure]: () => {
+          throw new Error(failure);
+        },
+      },
+    });
     assert.equal(await store.persist("call", "text"), undefined);
-    assert.deepEqual((await readdir(root)).filter((name) => name.endsWith(".tmp")), []);
+    assert.deepEqual(
+      (await readdir(root)).filter((name) => name.endsWith(".tmp")),
+      [],
+    );
   }
 });
 
 test("cleanup removes only stale extension-owned temp names without recursion", async (t) => {
   const root = await temporary(t);
-  const stale = join(root, `.compact-tools-${"a".repeat(24)}-${"b".repeat(16)}.tmp`);
-  const fresh = join(root, `.compact-tools-${"c".repeat(24)}-${"d".repeat(16)}.tmp`);
+  const stale = join(
+    root,
+    `.compact-tools-${"a".repeat(24)}-${"b".repeat(16)}.tmp`,
+  );
+  const fresh = join(
+    root,
+    `.compact-tools-${"c".repeat(24)}-${"d".repeat(16)}.tmp`,
+  );
   const user = join(root, "user.tmp");
-  const nested = join(root, `.compact-tools-${"e".repeat(24)}-${"f".repeat(16)}.tmp-dir`);
-  await Promise.all([writeFile(stale, "stale"), writeFile(fresh, "fresh"), writeFile(user, "user"), mkdir(nested)]);
+  const nested = join(
+    root,
+    `.compact-tools-${"e".repeat(24)}-${"f".repeat(16)}.tmp-dir`,
+  );
+  await Promise.all([
+    writeFile(stale, "stale"),
+    writeFile(fresh, "fresh"),
+    writeFile(user, "user"),
+    mkdir(nested),
+  ]);
   const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
   await utimes(stale, old, old);
   await new ToolResultArtifacts(root).cleanup();
@@ -206,21 +287,31 @@ test("cleanup removes only stale extension-owned temp names without recursion", 
 
 test("fresh owned temps count toward retention and cleanup reports deleted IDs and paths", async (t) => {
   const root = await temporary(t);
-  const ids = Array.from({ length: MAX_ARTIFACT_COUNT }, (_, index) => index.toString(16).padStart(24, "0"));
+  const ids = Array.from({ length: MAX_ARTIFACT_COUNT }, (_, index) =>
+    index.toString(16).padStart(24, "0"),
+  );
   await Promise.all(ids.map((id) => writeFile(join(root, `${id}.txt`), id)));
-  const fresh = join(root, `.compact-tools-${"a".repeat(24)}-${"b".repeat(16)}.tmp`);
+  const fresh = join(
+    root,
+    `.compact-tools-${"a".repeat(24)}-${"b".repeat(16)}.tmp`,
+  );
   await writeFile(fresh, "t".repeat(MAX_ARTIFACT_BYTES));
   const store = new ToolResultArtifacts(root);
   const cleanup = await store.cleanup();
   assert.equal(cleanup.ids.length, 1);
-  assert.deepEqual(cleanup.paths, cleanup.ids.map((id) => join(root, `${id}.txt`)));
+  assert.deepEqual(
+    cleanup.paths,
+    cleanup.ids.map((id) => join(root, `${id}.txt`)),
+  );
   assert.equal((await stat(fresh)).size, MAX_ARTIFACT_BYTES);
   assert.equal((await readdir(root)).length, MAX_ARTIFACT_COUNT);
 
-  const artifacts = await store.persistBatch(Array.from({ length: 20 }, (_, index) => ({
-    identity: `fresh-temp-${index}`,
-    text: "x".repeat(MAX_ARTIFACT_BYTES),
-  })));
+  const artifacts = await store.persistBatch(
+    Array.from({ length: 20 }, (_, index) => ({
+      identity: `fresh-temp-${index}`,
+      text: "x".repeat(MAX_ARTIFACT_BYTES),
+    })),
+  );
   assert.equal(artifacts.filter(Boolean).length, MAX_ARTIFACT_COUNT - 1);
   assert.equal((await stat(fresh)).size, MAX_ARTIFACT_BYTES);
   await assertOwnedUsageWithinCap(root);
@@ -232,6 +323,11 @@ test("rejects a symlinked artifact root and never writes outside session", async
   const location = await artifactLocation(session, "session");
   assert.ok(location);
   await symlink(outside, location.root);
-  assert.equal(await new ToolResultArtifacts(location.directory, { root: location.root }).persist("call", "secret"), undefined);
+  assert.equal(
+    await new ToolResultArtifacts(location.directory, {
+      root: location.root,
+    }).persist("call", "secret"),
+    undefined,
+  );
   assert.deepEqual(await readdir(outside), []);
 });

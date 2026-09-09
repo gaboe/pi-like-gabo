@@ -61,7 +61,12 @@ test("completion submission stays visibly under review", () => {
   };
   assert.equal(
     formatContent(
-      { kind: "update", id: 7, fromStatus: "in_progress", toStatus: "completed" },
+      {
+        kind: "update",
+        id: 7,
+        fromStatus: "in_progress",
+        toStatus: "completed",
+      },
       state,
     ),
     "Submitted #7 completion evidence for independent review",

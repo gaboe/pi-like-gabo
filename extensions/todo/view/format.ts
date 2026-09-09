@@ -2,7 +2,11 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { formatStatusLabel } from "../state/i18n-bridge.js";
 import { selectTaskSubjectById } from "../state/selectors.js";
-import type { TaskState } from "../state/state.js";
+import {
+  cancellationIntentTargetKey,
+  type TodoCancellationIntent,
+  type TaskState,
+} from "../state/state.js";
 import type {
   Task,
   TaskAction,
@@ -24,7 +28,7 @@ export const STATUS_GLYPH: Record<TaskStatus, string> = {
   pending: "○",
   in_progress: "◐",
   "waiting:user": "?",
-  "waiting:jobs": "◌",
+  "waiting:jobs": "▶",
   completed: "●",
   deleted: "⊘",
 };
@@ -41,7 +45,7 @@ export const STATUS_COLOR: Record<
   pending: "dim",
   in_progress: "warning",
   "waiting:user": "warning",
-  "waiting:jobs": "muted",
+  "waiting:jobs": "warning",
   completed: "success",
   deleted: "muted",
 };
@@ -53,6 +57,8 @@ export const STATUS_COLOR: Record<
 export const ACTION_GLYPH: Record<TaskAction, string> = {
   create: "+",
   update: "→",
+  merge: "≈",
+  challenge: "!",
   delete: "×",
   get: "›",
   list: "☰",
@@ -72,11 +78,51 @@ export function formatPreparationProgress(task: Task): string | undefined {
   return `preparing: ${progress}`;
 }
 
+export function formatCancellationStatus(
+  task: Task,
+  intents: readonly TodoCancellationIntent[] = [],
+): string | undefined {
+  const delegation = task.metadata?.delegation as
+    | {
+        status?: unknown;
+        cancellationAttempts?: unknown;
+        cancellationError?: unknown;
+      }
+    | undefined;
+  const taskIntents = [
+    ...new Map(
+      intents
+        .filter((intent) => intent.taskId === task.id)
+        .map((intent) => [cancellationIntentTargetKey(intent), intent]),
+    ).values(),
+  ];
+  const delegationPending = ["interrupted", "cancelling"].includes(
+    String(delegation?.status),
+  );
+  if (!delegationPending && !taskIntents.length) return undefined;
+  const attempts = Math.max(
+    Number.isSafeInteger(delegation?.cancellationAttempts)
+      ? Number(delegation?.cancellationAttempts)
+      : 0,
+    ...taskIntents.map((intent) => intent.attempts),
+  );
+  const failed =
+    typeof delegation?.cancellationError === "string" ||
+    taskIntents.some((intent) => intent.error !== undefined);
+  const preparationOnly =
+    !delegationPending &&
+    taskIntents.every((intent) => intent.kind === "preparation");
+  const subject = preparationOnly ? "preparation cancellation" : "cancellation";
+  if (attempts >= 3) return `${subject} exhausted · re-arm required`;
+  if (failed) return `${subject} failed · retry pending`;
+  return preparationOnly ? "cancelling preparation" : "cancelling workers";
+}
+
 function formatJobWait(wait: Extract<TaskWait, { kind: "jobs" }>): string {
   const remaining = wait.jobIds.filter((id) => !wait.settled[id]);
   const settled = wait.jobIds.length - remaining.length;
   const progress = settled ? ` · ${settled}/${wait.jobIds.length} settled` : "";
-  return `(${wait.mode}: ${remaining.join(",") || "settling"}${progress})`;
+  return `(running · ${wait.mode}: ${remaining.join(",") || "settling"}${progress})`;
 }
 
 /**
@@ -94,7 +140,7 @@ export function overlayStatusGlyph(status: TaskStatus, theme: Theme): string {
     case "waiting:user":
       return theme.fg("warning", "?");
     case "waiting:jobs":
-      return theme.fg("muted", "◌");
+      return theme.fg("warning", "▶");
     case "completed":
       return theme.fg("success", "✓");
     case "deleted":
@@ -102,23 +148,53 @@ export function overlayStatusGlyph(status: TaskStatus, theme: Theme): string {
   }
 }
 
+export function completionReviewFooterStatus(
+  tasks: readonly Task[],
+): string | undefined {
+  const pending = tasks.filter(
+    (task) => task.status === "completed" && task.review?.status === "pending",
+  );
+  if (!pending.length) return undefined;
+  const ids = pending.map((task) => `#${task.id}`);
+  const visible = ids.slice(0, 3).join(", ");
+  const label = pending.some((task) => task.review?.dispatchedAt !== undefined)
+    ? "completion review"
+    : "completion review queued";
+  return `${label}: ${visible}${ids.length > 3 ? ` +${ids.length - 3}` : ""}`;
+}
+
 /**
  * Format a single task for the overlay (with theme + glyph + dep suffix).
  * Used by `TodoOverlay.formatTaskLine` post-refactor; behavior is unchanged.
  */
+function completionReviewFailureText(t: Task): string {
+  const verification = t.metadata?.verification as
+    { state?: unknown } | undefined;
+  return t.review?.status === "rejected" && verification?.state !== "failed"
+    ? "completion review rejected"
+    : "completion review failed";
+}
+
 export function formatOverlayTaskLine(
   t: Task,
   theme: Theme,
   showId: boolean,
+  intents: readonly TodoCancellationIntent[] = [],
 ): string {
   const preparation = formatPreparationProgress(t);
+  const cancellation = formatCancellationStatus(t, intents);
   const reviewingCompletion =
-    t.status === "completed" && t.review !== undefined && t.review.status !== "approved";
-  const glyph = preparation || reviewingCompletion
-    ? theme.fg("warning", "◐")
-    : overlayStatusGlyph(t.status, theme);
+    t.status === "completed" && t.review?.status === "pending";
+  const reviewFailed = ["rejected", "failed"].includes(
+    String(t.review?.status),
+  );
+  const glyph =
+    preparation || reviewingCompletion || reviewFailed || cancellation
+      ? theme.fg("warning", "◐")
+      : overlayStatusGlyph(t.status, theme);
   const terminal =
-    (t.status === "completed" && !reviewingCompletion) || t.status === "deleted";
+    (t.status === "completed" && !reviewingCompletion && !reviewFailed) ||
+    t.status === "deleted";
   const subjectColor = terminal ? "dim" : "text";
   let subject = theme.fg(subjectColor, t.subject);
   if (terminal) {
@@ -129,11 +205,14 @@ export function formatOverlayTaskLine(
   line += ` ${subject}`;
   if (reviewingCompletion) {
     line += ` ${theme.fg("dim", "(reviewing completion)")}`;
+  } else if (reviewFailed) {
+    line += ` ${theme.fg("error", `(${completionReviewFailureText(t)})`)}`;
   } else if (t.status === "in_progress" && t.activeForm) {
     line += ` ${theme.fg("dim", `(${t.activeForm})`)}`;
   } else if (preparation) {
     line += ` ${theme.fg("dim", `(${preparation})`)}`;
   }
+  if (cancellation) line += ` ${theme.fg("dim", `(${cancellation})`)}`;
   if (t.blockedBy && t.blockedBy.length > 0) {
     line += ` ${theme.fg("dim", `⛓ ${t.blockedBy.map((id) => `#${id}`).join(",")}`)}`;
   }
@@ -148,18 +227,30 @@ export function formatOverlayTaskLine(
  * Format a single task line for the `/todos` slash command (no glyph color,
  * indented bullet prefix). Pre-refactor `todo.ts:670-674`.
  */
-export function formatCommandTaskLine(t: Task, glyph: string): string {
+export function formatCommandTaskLine(
+  t: Task,
+  glyph: string,
+  intents: readonly TodoCancellationIntent[] = [],
+): string {
   const preparation = formatPreparationProgress(t);
+  const cancellation = formatCancellationStatus(t, intents);
   const reviewingCompletion =
-    t.status === "completed" && t.review !== undefined && t.review.status !== "approved";
-  if (preparation || reviewingCompletion) glyph = "◐";
+    t.status === "completed" && t.review?.status === "pending";
+  const reviewFailed = ["rejected", "failed"].includes(
+    String(t.review?.status),
+  );
+  if (preparation || reviewingCompletion || reviewFailed || cancellation)
+    glyph = reviewFailed ? "✗" : "◐";
   const form = reviewingCompletion
     ? " (reviewing completion)"
-    : t.status === "in_progress" && t.activeForm
-      ? ` (${t.activeForm})`
-      : preparation
-        ? ` (${preparation})`
-        : "";
+    : reviewFailed
+      ? ` (${completionReviewFailureText(t)})`
+      : t.status === "in_progress" && t.activeForm
+        ? ` (${t.activeForm})`
+        : preparation
+          ? ` (${preparation})`
+          : "";
+  const cancellationText = cancellation ? ` (${cancellation})` : "";
   const block = t.blockedBy?.length
     ? `    ⛓ ${t.blockedBy.map((id) => `#${id}`).join(",")}`
     : "";
@@ -169,7 +260,7 @@ export function formatCommandTaskLine(t: Task, glyph: string): string {
       : t.wait?.kind === "jobs"
         ? ` ${formatJobWait(t.wait)}`
         : "";
-  return `  ${glyph} #${t.id} ${t.subject}${form}${wait}${block}`;
+  return `  ${glyph} #${t.id} ${t.subject}${form}${cancellationText}${wait}${block}`;
 }
 
 // ---------------------------------------------------------------------------

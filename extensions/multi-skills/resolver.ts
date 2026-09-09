@@ -14,8 +14,8 @@ import { dirname, join } from "node:path";
 export interface SkillInfo {
   name: string;
   description: string;
-  dir: string;               // Absolute path to skill directory
-  skillMdPath: string;       // Absolute path to SKILL.md or flat .md skill file
+  dir: string; // Absolute path to skill directory
+  skillMdPath: string; // Absolute path to SKILL.md or flat .md skill file
   scope: "user" | "project" | "temporary";
 }
 
@@ -69,7 +69,9 @@ function skillFromCommand(command: SlashCommandInfo): SkillInfo | undefined {
  * validation, and collisions before exposing these commands. We preserve that
  * order and keep the first command for a given skill name.
  */
-export function buildSkillRegistry(commands: SlashCommandInfo[]): Map<string, SkillInfo> {
+export function buildSkillRegistry(
+  commands: SlashCommandInfo[],
+): Map<string, SkillInfo> {
   const registry = new Map<string, SkillInfo>();
 
   for (const command of commands) {
@@ -88,9 +90,10 @@ export function buildSkillRegistry(commands: SlashCommandInfo[]): Map<string, Sk
 export function formatSkillTable(registry: Map<string, SkillInfo>): string {
   const rows: string[] = [];
   for (const [name, info] of registry) {
-    const desc = info.description.length > 60
-      ? info.description.slice(0, 60) + "..."
-      : info.description;
+    const desc =
+      info.description.length > 60
+        ? info.description.slice(0, 60) + "..."
+        : info.description;
     rows.push(`  \$${name.padEnd(28)} ${desc}`);
   }
   return rows.join("\n");

@@ -22,7 +22,8 @@ The execution contract supplied by the user or authored by the Orchestrator from
 
 - A simple plan is fully contained in a self-contained worker prompt.
 - A complex or multi-package plan lives at `scratchpad/<topic>-plan.md` in the same Markdown style used by Claude Code plans.
-- A plan file is not itself an approval gate. The user's stated intent decides whether execution starts or waits.
+- A prepared plan is not a per-TODO approval checkpoint. The TODO tracker coordinates safe continuation and consumes host/project permission outcomes; it does not grant permission itself.
+- `waiting:user` means a real unresolved user decision, such as a clarification. `waiting:jobs` is event-driven: matching job/worker events or startup reconciliation wake it, and unrelated jobs are never polled. Actionable siblings continue until all work is complete or every unresolved TODO is waiting on a user or job.
 
 The central plan is written only by the Orchestrator. It may link naturally large artifacts, logs, screenshots, or reports produced by workers.
 
@@ -114,6 +115,7 @@ Between these points the Orchestrator naturally reacts to package results, appro
 - The parent owns user communication, approvals, semantic gates, integration, Git history, and external mutations.
 - `/reload` never implies completion. Live packages become `interrupted`; a replacement worker must inspect the current diff/worktree before continuing.
 - A classifier or preparation failure never disables an already sticky Orchestrator mode.
+- Per-TODO prepared-plan approval is not a domain concept; host/project permissions remain outside the TODO tracker.
 - Nested lineage exposes only bounded `parentId`, `depth`, and `role`; never prompts, paths, ownership tokens, or credentials.
 
 ## Terms deliberately not used

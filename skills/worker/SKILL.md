@@ -29,11 +29,43 @@ it was measured at the moment you wrote it.
 `luna` — Codex at high reasoning. The default and, so far, the only profile worth the pane:
 
 ```bash
-herdr agent start luna --kind codex --pane <pane-id> --timeout 60000 -- -c model_reasoning_effort="high"
+herdr agent start luna --kind codex --pane <pane-id> --timeout 60000 -- \
+  -m gpt-5.6-luna -c model_reasoning_effort="high"
 ```
 
-Split a pane first (right for a wide caller, down for a narrow one), pass `--no-focus`, and pass the
-caller's `$PWD` as `--cwd` so the worker lands in the same tree.
+**A codex pane that reasons but never runs a command has a broken install, not a bad seed.** Every
+shell call in the TUI goes through a separate `codex-code-mode-host` binary beside `codex` in the
+Caskroom, and an interrupted upgrade can leave it missing while `codex --version` answers happily.
+The worker then starts, reads its seed, thinks about it, and fails *before execution* on every
+command, reporting only that the runner is unavailable. Check for the binary:
+
+```bash
+ls /opt/homebrew/Caskroom/codex/*/bin/
+```
+
+Two files, or the pane is dead on arrival. `brew reinstall --cask codex` restores it and does not
+kill agents already holding panes — running processes keep their open handles. Do not reach for
+`-c features.code_mode_host=false`: it works in `codex exec` but the TUI refuses shell outright
+without the host, so it turns a fixable install into a permanently mute worker.
+
+**Always pass `-m` explicitly.** Without it the model comes from `~/.codex/config.toml`, which is a
+global the worker does not control and which changes for reasons that have nothing to do with this
+task — so a pane you believed was luna can quietly be something else, and the report reads the same
+either way. The profile name in this skill means nothing unless the flag pins it. The same applies
+to `-c model_reasoning_effort`: that config sets `xhigh` today, so passing `high` is a real override
+and not a restatement of the default. Pin both, and the pane is what the name says it is.
+
+Split a pane first (right for a wide caller, down for a narrow one), pass `--no-focus`, and set the
+worker's directory with `--cwd` on `herdr pane split`. `agent start` has no such flag and answers
+`unknown option: --cwd`.
+
+**Start the worker in the root repository, never in a child checkout.** In a meta-repo the work lands
+in the submodules, but the root is where it is *seen*: from `nexus/` one worker reads `nexus-be/` and
+`docs/` in a single tree, the root skills and permissions apply, and `git status` shows the submodule
+pointers its commits are about to move. Started inside `docs/`, that same worker holds one repository,
+reaches its sibling only through `../`, and its git commands land in the submodule while the pointer
+bump they imply stays invisible. Hand it the root as `--cwd` and let it `cd` into the submodule
+itself.
 
 **Name every worker `<profile>-<role>`.** Herdr requires the name to be unique among live agents, and
 a bare `luna` blocks the second one you want — so `luna-docs`, `luna-fix`, `luna-review`. The profile
@@ -49,6 +81,81 @@ underneath itself. Add a profile here when one earns it.
 Prompts run for minutes, so send them backgrounded with `--wait` and let the harness wake you. A
 completion notification means the agent settled — a separate claim from the work being right, and
 only one of those is yours to make.
+
+`herdr agent prompt <target> <text>` takes the prompt as a positional argument; there is no
+`--file`, and passing one exits 0 after printing `unknown option: --file`, so a seed that never
+reached the pane looks exactly like one that did. A long seed goes in as `"$(cat seed.txt)"`. To
+wait, `herdr agent wait <name> --until idle --until blocked` is the primitive — do not build a
+sleep-and-poll loop beside it.
+
+**Herdr reports failure through exit 0.** The `--file` case above, and `agent wait` answering
+`{"error":{"code":"agent_not_running"}}` when the pane died under it, both look like success to a
+shell that checks status. Parse the JSON, do not trust the code.
+
+There is no `agent stop`. Ending one means quitting the program in its pane — `herdr pane send-text
+<pane> "/quit"` then `herdr agent send-keys <name> enter` — and the first `enter` after a
+`send-text` regularly does not register, so send it again and confirm the agent is gone from `agent
+list` rather than assuming. Names free up only once it is.
+
+**Confirm the worker ran a command before you believe it is working.** `agent_status: working` means
+the program is busy, not that its tools function; the missing-host failure above sat in `working`
+for its whole life. One `pane read` a minute in, looking for real command output rather than
+reasoning prose, separates a worker from a worker-shaped stall.
+
+## Reply path
+
+Resolve your live Herdr agent name from `herdr agent list` by matching `$HERDR_PANE_ID`; never guess
+it from model or role. End every prompt to a worker with this exact footer:
+
+```text
+Reply-to: <driver-agent-name>
+```
+
+Put the callback rule below in the seed itself; the worker cannot infer it from this driver-side
+skill. When work reaches `done`, `partial`, `blocked`, or `failed`, the worker sends one asynchronous
+result prompt to that reply target before settling:
+
+```bash
+herdr agent prompt <driver-agent-name> "[worker-result]
+worker: <worker-agent-name>
+status: <done|partial|blocked|failed>
+summary: <outcome or blocker>
+work-record: <path>
+verified: <decisive receipt or not verified>
+Reply-to: <worker-agent-name>"
+```
+
+Use no `--wait`: this is a handoff notification, not worker acceptance of the orchestrator's next
+turn. The result prompt supplements the required work record; it does not replace receipts or the
+driver's gate.
+
+## Monitor Herdr workers
+
+A **monitor** is the current host harness's background wait-and-wake capability, not a named tool.
+Run each long Herdr prompt under one bounded monitor. When the harness has no background primitive,
+use one bounded foreground `herdr --wait`; never replace wake-up with a sleep-and-poll loop.
+
+Target the unique Herdr agent name. This process is the same when driver or worker is Pi, Claude Code,
+Codex, or another recognized kind.
+
+Completion criterion: the harness wakes the driver with a terminal monitor event and captured output
+or artifact location. Then inspect work record, current diff, and decisive receipts before accepting
+the worker's claims.
+
+**`idle` right after a dispatch means the prompt never ran.** `agent prompt` pastes the text and the
+first enter after a paste regularly does not register, so the pane sits on `[Pasted Content N chars]`
+with the agent `idle` — and a monitor that treats `idle` as terminal fires within the minute and reads
+as "finished". Require the status to reach `working` once before you accept `idle` as done, and when
+`idle` arrives that fast, read the pane instead of the report. `herdr agent send-keys <name> enter`,
+twice, submits what is sitting there.
+
+A monitor also earns a **stall** branch: while the status says `working`, compare the pane's output
+size between polls and report when it has not moved for ten minutes. That is the shape that catches a
+worker which reasons but never executes — the missing `codex-code-mode-host` failure above sits in
+`working` for its whole life.
+
+For harness adapters, timeout recovery, `blocked`/`unknown`/`agent_not_found`, artifact capture, or a
+reviewer sharing the worktree, read [monitoring.md](monitoring.md).
 
 ## Receipts
 
@@ -111,6 +218,15 @@ You will hand a worker a wrong premise. An agent told to fix a bug finds somethi
 or not the bug exists, so retract explicitly: name the part withdrawn, the part that still stands,
 and why.
 
+**Quote the decision record; do not paraphrase it into the seed.** A seed written from memory of a
+decision drifts from it, and the worker implements the drift faithfully — one paraphrase of "a null
+projection returns 404" as "returns the row" cost a full round plus a hand-rolled type to make the
+wrong behaviour work. Paste the sentence from the ledger or ADR that decides the point.
+
+**Diff the seed against what you told the user it contains.** Announcing a five-item round and
+dispatching four is invisible until a review pass finds the fifth item unimplemented, and by then it
+reads as the worker's omission rather than yours.
+
 Keep any instrumentation that earned its place on its own. It is usually the thing that would have
 caught the wrong premise first — after a diagnosis-by-guesswork round, the diag output that settled
 it in one line was worth more than the fix.
@@ -143,3 +259,25 @@ one an explicit set of paths and keep those sets disjoint. Where they cannot be,
 instead of parallelising it.
 
 Close the panes and agents you created once their work is done.
+
+**Sweep idle panes as part of every gate, not once at the end.** After each result you accept, ask
+of every idle agent: is there a next task where its accumulated context is *evidence*, or would it
+be *noise*? Keep the ones whose subsystem still has work — the agent that just moved six vias
+should move the other three. Close the rest. An agent whose subsystem is finished is not free to
+keep: it holds a unique name you may want, occupies a pane, and invites the mistake of handing it
+unrelated work because it happens to be idle.
+
+A rough rule that has held: keep at most one idle agent per live subsystem, and close any agent
+whose deliverable you have already gated and committed.
+
+Closing is a two-step with a confirmation, because there is no `agent stop`:
+
+```bash
+herdr pane send-text <pane-id> "/quit"
+herdr agent send-keys <name> enter      # the first enter after send-text often does not register
+herdr agent send-keys <name> enter      # so send it again
+herdr agent list                        # confirm the name is GONE, do not assume
+```
+
+The name frees only once the agent has actually left `agent list`. If it is still there, the pane
+is still occupied and `agent start` with that name will fail.

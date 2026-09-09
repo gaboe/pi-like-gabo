@@ -2,6 +2,13 @@ import type { TaskState } from "../state/state.js";
 import type { Op } from "../state/state-reducer.js";
 import { deriveBlocks } from "../state/task-graph.js";
 import { formatPreparationProgress } from "../view/format.js";
+import { publicTodoState } from "../state/inbox.js";
+import {
+  isTodoReviewTargetIdentity,
+  todoReviewTargetIdentityBinding,
+  validateTodoReviewTarget,
+} from "../enrichment.js";
+import { isBoundedMetadata } from "./types.js";
 import type {
   Task,
   TaskAction,
@@ -16,6 +23,15 @@ import type {
  */
 function rendererParams(params: TaskMutationParams): TaskDetails["params"] {
   return {
+    ...(params.id === undefined ? {} : { id: params.id }),
+    ...(params.duplicateId === undefined
+      ? {}
+      : { duplicateId: params.duplicateId }),
+    ...(params.decision === undefined ? {} : { decision: params.decision }),
+    ...(params.challengeEvidence?.length
+      ? { challengeEvidence: [...params.challengeEvidence] }
+      : {}),
+    ...(params.rationale === undefined ? {} : { rationale: params.rationale }),
     ...(params.status === undefined ? {} : { status: params.status }),
     ...(params.addBlockedBy?.length
       ? { addBlockedBy: [...params.addBlockedBy] }
@@ -31,13 +47,15 @@ function formatListLine(t: Task): string {
     ? ` ⛓ ${t.blockedBy.map((id) => `#${id}`).join(",")}`
     : "";
   const preparation = formatPreparationProgress(t);
+  const merged =
+    t.mergedInto === undefined ? "" : ` → merged into #${t.mergedInto}`;
   const form =
     t.status === "in_progress" && t.activeForm
       ? ` (${t.activeForm})`
       : preparation
         ? ` (${preparation})`
         : "";
-  return `[${preparation ? "preparing" : t.status}] #${t.id} ${t.subject}${form}${block}`;
+  return `[${publicTodoState(t)}] #${t.id} ${t.subject}${form}${block}${merged}`;
 }
 
 /**
@@ -45,9 +63,46 @@ function formatListLine(t: Task): string {
  * pre-refactor `todo.ts:354-376` — description, activeForm, blockedBy, blocks,
  * owner — so envelope-level snapshot tests stay byte-equivalent.
  */
+function packageAssignmentHandshake(task: Task): string[] | undefined {
+  const preparation = task.metadata?.preparation;
+  if (!isBoundedMetadata(preparation)) return undefined;
+  const capability = preparation.hostAssignment;
+  if (!isBoundedMetadata(capability)) return undefined;
+  if (
+    preparation.status !== "ready" ||
+    typeof preparation.token !== "string" ||
+    capability.source !== "host" ||
+    capability.version !== 1 ||
+    capability.token !== preparation.token ||
+    typeof capability.targetBinding !== "string"
+  )
+    return undefined;
+  const target = preparation.reviewTarget;
+  const identity =
+    target && isBoundedMetadata(target) && target.status === "selected"
+      ? target.identity
+      : preparation.analysisCwdIdentity;
+  const cwd =
+    target && isBoundedMetadata(target) && target.status === "selected"
+      ? target.path
+      : preparation.analysisCwd;
+  if (
+    typeof cwd !== "string" ||
+    !isTodoReviewTargetIdentity(identity) ||
+    validateTodoReviewTarget(cwd, identity) !== cwd ||
+    todoReviewTargetIdentityBinding(identity) !== capability.targetBinding
+  )
+    return undefined;
+  return [
+    `  todo_id: ${task.id}`,
+    `  todo_token: ${preparation.token}`,
+    `  targetBinding: ${capability.targetBinding}`,
+  ];
+}
+
 function formatGetLines(task: Task, state: TaskState): string {
   const blocks = deriveBlocks(state.tasks).get(task.id) ?? [];
-  const lines = [`#${task.id} [${task.status}] ${task.subject}`];
+  const lines = [`#${task.id} [${publicTodoState(task)}] ${task.subject}`];
   if (task.description) lines.push(`  description: ${task.description}`);
   if (task.activeForm) lines.push(`  activeForm: ${task.activeForm}`);
   if (task.blockedBy?.length) {
@@ -58,15 +113,31 @@ function formatGetLines(task: Task, state: TaskState): string {
   if (blocks.length) {
     lines.push(`  blocks: ${blocks.map((id) => `#${id}`).join(", ")}`);
   }
+  if (task.mergedInto !== undefined)
+    lines.push(`  merged into: #${task.mergedInto}`);
   if (task.owner) lines.push(`  owner: ${task.owner}`);
+  const inbox = task.metadata?.inbox as Record<string, unknown> | undefined;
+  if (
+    inbox?.reason === "failed prerequisite" &&
+    Number.isSafeInteger(inbox.sourceFailureId)
+  )
+    lines.push(
+      `  failure: failed prerequisite #${String(inbox.sourceFailureId)}`,
+    );
   if (task.result) lines.push(`  result: ${task.result}`);
-  for (const evidence of task.evidence ?? []) lines.push(`  completionEvidence: ${evidence}`);
+  for (const evidence of task.evidence ?? [])
+    lines.push(`  completionEvidence: ${evidence}`);
   if (task.review) {
     lines.push(`  review: ${task.review.status}`);
-    lines.push(`  reviewer: ${task.review.reviewer.id} (${task.review.reviewer.model})`);
-    if (task.review.feedback) lines.push(`  reviewFeedback: ${task.review.feedback}`);
+    lines.push(
+      `  reviewer: ${task.review.reviewer.id} (${task.review.reviewer.model})`,
+    );
+    if (task.review.feedback)
+      lines.push(`  reviewFeedback: ${task.review.feedback}`);
     if (task.review.failedAt !== undefined) {
-      lines.push(`  reviewFailure: ${new Date(task.review.failedAt).toISOString()}`);
+      lines.push(
+        `  reviewFailure: ${new Date(task.review.failedAt).toISOString()}`,
+      );
     }
   }
   const orchestrator = task.metadata?.orchestrator as
@@ -87,17 +158,54 @@ function formatGetLines(task: Task, state: TaskState): string {
     lines.push(`  delegation: ${String(delegation?.status)}`);
     if (delegation?.status === "interrupted")
       lines.push("  recovery: inspect current diff/worktree before redispatch");
-    if (delegation?.status === "cancelling" && delegation.cancellationError)
-      lines.push(
-        `  cancellationError: ${String(delegation.cancellationError)}`,
-      );
+    if (delegation?.status === "cancelling") {
+      const attempts = Number.isSafeInteger(delegation.cancellationAttempts)
+        ? Number(delegation.cancellationAttempts)
+        : 0;
+      const cancellation =
+        attempts >= 3
+          ? "exhausted; re-arm required"
+          : delegation.cancellationError
+            ? "failed; retry pending"
+            : "pending";
+      lines.push(`  cancellation: ${cancellation}`);
+    }
   }
   const preparation = task.metadata?.preparation as
     Record<string, unknown> | undefined;
   if (preparation) {
     lines.push(`  preparation: ${String(preparation.status ?? "unknown")}`);
-    if (typeof preparation.token === "string" && preparation.token.trim()) {
-      lines.push(`  todo_id: ${task.id}`, `  todo_token: ${preparation.token}`);
+    const handshake = packageAssignmentHandshake(task);
+    if (handshake) lines.push(...handshake);
+    const target = preparation.reviewTarget;
+    if (target && typeof target === "object" && !Array.isArray(target)) {
+      const selected = target as {
+        status?: unknown;
+        path?: unknown;
+        identity?: unknown;
+      };
+      if (
+        selected.status === "selected" &&
+        typeof selected.path === "string" &&
+        isTodoReviewTargetIdentity(selected.identity)
+      ) {
+        lines.push(`  executionTarget: ${selected.path}`);
+      } else if (selected.status === "unresolved") {
+        lines.push("  executionTarget: unresolved (explicit checkout target)");
+      }
+    } else if (
+      typeof preparation.analysisCwd === "string" &&
+      isTodoReviewTargetIdentity(preparation.analysisCwdIdentity)
+    ) {
+      const canonical = validateTodoReviewTarget(
+        preparation.analysisCwd,
+        preparation.analysisCwdIdentity,
+      );
+      if (canonical === preparation.analysisCwd) {
+        lines.push(`  executionTarget: ${canonical}`);
+      } else {
+        lines.push("  executionTarget: unresolved (checkout identity changed)");
+      }
     }
     if (typeof preparation.summary === "string")
       lines.push(`  preparedSummary: ${preparation.summary}`);
@@ -155,7 +263,7 @@ export function formatContent(op: Op, state: TaskState): string {
       const t = state.tasks.find((x) => x.id === op.taskId);
       // Defensive — `op.taskId` always resolves on success path.
       if (!t) return `Created #${op.taskId}`;
-      return `Created #${t.id}: ${t.subject} (pending)`;
+      return `Created #${t.id}: ${t.subject} (${publicTodoState(t)})`;
     }
     case "update": {
       const task = state.tasks.find((candidate) => candidate.id === op.id);
@@ -168,6 +276,10 @@ export function formatContent(op: Op, state: TaskState): string {
           : "";
       return `Updated #${op.id}${transition}`;
     }
+    case "merge":
+      return `Merged #${op.duplicateId} into execution owner #${op.executionOwnerId}`;
+    case "challenge":
+      return `Recorded verification challenge for #${op.id}`;
     case "delete":
       return `Deleted #${op.id}: ${op.subject}`;
     case "clear":
@@ -204,9 +316,11 @@ export function buildToolResult(
   const task =
     op.kind === "create"
       ? state.tasks.find((candidate) => candidate.id === op.taskId)
-      : op.kind === "update" || op.kind === "delete"
+      : op.kind === "update" || op.kind === "challenge" || op.kind === "delete"
         ? state.tasks.find((candidate) => candidate.id === op.id)
-        : undefined;
+        : op.kind === "merge"
+          ? state.tasks.find((candidate) => candidate.id === op.duplicateId)
+          : undefined;
   const details: TaskDetails = {
     action,
     params: rendererParams(params),

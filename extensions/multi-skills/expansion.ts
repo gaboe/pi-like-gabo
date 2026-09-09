@@ -86,7 +86,9 @@ export function expandSkillReferences(
   const failed: SkillLoadFailure[] = [];
   for (const skill of resolved) {
     try {
-      const body = stripFrontmatter(readFileSync(skill.skillMdPath, "utf-8")).trim();
+      const body = stripFrontmatter(
+        readFileSync(skill.skillMdPath, "utf-8"),
+      ).trim();
       loaded.push({ skill, body });
     } catch (error) {
       failed.push({ skill, error });

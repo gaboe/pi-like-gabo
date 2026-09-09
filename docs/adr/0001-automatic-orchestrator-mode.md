@@ -9,7 +9,7 @@
 
 Complex work currently depends on the parent model remembering to adopt an orchestrator role. This can serialize independent work, consume parent context on repository discovery and implementation, create small worker tasks, and accept incomplete handoffs. A fixed larger worker cap would not solve package quality, conflicts, or semantic acceptance.
 
-The desired behavior is automatic but simple: prepare strong evidence, create a durable plan when useful, directly assign maximal coherent packages, and keep the parent responsible for decisions and semantic gates.
+The desired behavior is automatic but simple: prepare strong evidence, create a durable plan when useful, directly assign maximal coherent packages, and keep the parent responsible for decisions and semantic gates. The TODO plugin coordinates work; it is not a permissions engine.
 
 ## Decision
 
@@ -41,7 +41,8 @@ There is no separate TODO Planner.
 - Simple work is described completely in the worker prompt.
 - Complex or multi-package work uses `scratchpad/<topic>-plan.md` in Claude Code-compatible Markdown.
 - The Orchestrator is the sole writer of the central plan.
-- A plan file does not create an approval gate; user intent and unresolved decisions do.
+- A prepared plan is not a per-TODO permission checkpoint. Host/project permission mechanisms remain authoritative; preparation makes safe work actionable and does not dispatch an approval question.
+- `waiting:user` is reserved for a real unresolved user decision, such as an analyst clarification. `waiting:jobs` wakes only from a matching job/worker event or startup reconciliation; it never polls unrelated jobs. The Orchestrator continues selecting actionable siblings until work is complete or every unresolved TODO is waiting on a user or job.
 
 Each Work Package uses the mandatory compact header defined in the glossary.
 
