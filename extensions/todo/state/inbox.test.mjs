@@ -373,7 +373,10 @@ test("failure propagation is iterative, non-mutating, and cycle-safe", () => {
 test("fresh completion clears stale verification failure and recovers descendants", () => {
   const failed = propagatePrerequisiteFailure([
     task(1, "in_progress", {
-      metadata: { verification: { state: "failed", failure: "old review" } },
+      metadata: {
+        verification: { state: "failed", failure: "old review" },
+        custom: "preserved",
+      },
     }),
     ready(2, { blockedBy: [1] }),
   ]);
@@ -385,6 +388,7 @@ test("fresh completion clears stale verification failure and recovers descendant
     { id: 1, status: "completed", result: "fixed", evidence: ["verified"] },
   ).state;
   assert.equal(completed.tasks[0].metadata?.verification, undefined);
+  assert.equal(completed.tasks[0].metadata?.custom, "preserved");
   assert.equal(completed.tasks[0].review.status, "pending");
   assert.equal(publicTodoState(completed.tasks[0]), "verifying");
   assert.deepEqual(completed.tasks[1].blockedBy, [1]);

@@ -231,6 +231,17 @@ function boundedMutationState(state: TaskState): TaskState | undefined {
   return bounded && isPersistableTaskState(bounded) ? bounded : undefined;
 }
 
+function clearSupersededVerificationFailure(
+  metadata: Task["metadata"] | undefined,
+  completing: boolean,
+): Task["metadata"] | undefined {
+  const verification = metadata?.verification as
+    { state?: unknown } | undefined;
+  if (!completing || verification?.state !== "failed") return metadata;
+  const { verification: _verification, ...remaining } = metadata ?? {};
+  return Object.keys(remaining).length ? remaining : undefined;
+}
+
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -745,12 +756,10 @@ export function applyTaskMutation(
         }
         newMetadata = Object.keys(merged).length ? merged : undefined;
       }
-      const supersedesFailedVerification =
-        completion !== undefined && verification?.state === "failed";
-      if (supersedesFailedVerification) {
-        const { verification: _verification, ...metadata } = newMetadata ?? {};
-        newMetadata = Object.keys(metadata).length ? metadata : undefined;
-      }
+      newMetadata = clearSupersededVerificationFailure(
+        newMetadata,
+        completion !== undefined,
+      );
       const preparation = newMetadata?.preparation;
       if (
         completing &&
