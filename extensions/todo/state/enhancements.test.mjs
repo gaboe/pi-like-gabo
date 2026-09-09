@@ -519,6 +519,16 @@ describe("todo completion evidence", () => {
       prompt,
       /do not use an unrelated root\/submodule diff to contradict evidence/i,
     );
+    assert.match(prompt, /completion check, not a code review/i);
+    assert.match(prompt, /Bias strongly toward approval/);
+    assert.match(
+      prompt,
+      /incomplete bounded overlay.*not by itself a rejection reason/i,
+    );
+    assert.doesNotMatch(
+      prompt,
+      /require the claimed change.*evidence and diff/i,
+    );
   });
 
   it("uses only a validated explicit checkout target and fails closed otherwise", () => {
@@ -1749,7 +1759,7 @@ describe("todo completion evidence", () => {
     }
   });
 
-  it("blocks implementation review when the overlay is incomplete", async () => {
+  it("lets requirement review use evidence when the overlay is incomplete", async () => {
     const cwd = await mkdtemp(
       path.join(tmpdir(), "todo-review-blocked-overlay-"),
     );
@@ -1759,7 +1769,12 @@ describe("todo completion evidence", () => {
     const unregister = registerBackgroundSubagentService({
       async run(request) {
         requests.push(request);
-        throw new Error("review worker must not run");
+        return {
+          id: "evidence-reviewer",
+          status: "done",
+          output:
+            '{"decision":"approved","feedback":"explicit request and verification evidence are complete"}',
+        };
       },
     });
     const adapter = new JobsAdapter(new Bus());
@@ -1807,13 +1822,11 @@ describe("todo completion evidence", () => {
         modelRegistry: {},
       });
       scheduler.stateChanged();
-      await waitFor(() => getState().tasks[0].review.status === "rejected");
-      assert.equal(requests.length, 0);
-      assert.equal(getState().tasks[0].review.status, "rejected");
-      assert.match(
-        getState().tasks[0].review.feedback,
-        /overlay is incomplete/,
-      );
+      await waitFor(() => getState().tasks[0].review.status === "approved");
+      assert.equal(requests.length, 1);
+      assert.match(requests[0].prompt, /complete=false/);
+      assert.match(requests[0].prompt, /missing-task-baseline/);
+      assert.equal(getState().tasks[0].review.status, "approved");
     } finally {
       scheduler.dispose();
       adapter.dispose();
@@ -9795,15 +9808,18 @@ Recommendation: implement external DTO guards.`;
       assert.match(requests[0].prompt, /Task 1/);
       assert.match(requests[0].prompt, /json="done"/);
       assert.match(requests[0].prompt, /json="\[\\"verified\\"\]"/);
-      assert.match(requests[0].prompt, /Mermaid diagram or GitHub links/);
+      assert.match(
+        requests[0].prompt,
+        /requested diagram or links are actually absent/,
+      );
       assert.match(requests[0].prompt, /current git diff/i);
       assert.match(
         requests[0].prompt,
-        /research, analysis, investigation, or drafting work, an empty diff is expected/i,
+        /research, analysis, investigation, drafting, Git operations, or documentation delivery, an empty diff is expected/i,
       );
       assert.match(
         requests[0].prompt,
-        /evidence identifies concrete sources, commands, excerpts, or links/i,
+        /Judge the requested outcome and concrete evidence/i,
       );
       await waitFor(() => getState().tasks[0].review.status === "approved");
       assert.equal(getState().tasks[0].review.status, "approved");
