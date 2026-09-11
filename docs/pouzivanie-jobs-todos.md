@@ -45,7 +45,7 @@ Normally, only one task should be `in_progress` at a time.
 
 Preparation never changes requirements or task status and never wakes the main agent. Every transition uses a per-TODO token and monotonic version. Editing or starting the task invalidates stale output and settles preparation fail-open. When processing the task later, the main agent first calls `todo get` and verifies prepared information against current code.
 
-When the last visible task completes, the scheduler asks the agent for a completion review. The agent compares TODOs with the original request and evidence. If work is missing, it creates TODOs and continues. Otherwise, it calls `todo clear`, which archives the completed batch as `deleted` instead of erasing it, then sends one final report. `todo clear` rejects the operation while any pending, in-progress, or waiting task exists. Two completion reviews without state changes pause automation to prevent a loop.
+When the last visible task completes, the scheduler asks the agent for a completion review. This is a requirement-completeness check, not a code review: it approves when the result and concrete evidence plausibly satisfy every explicit request and rejects only a named material omission, contradiction, missing mandatory check, or plainly premature closure. Workspace diffs are supporting context, so missing diff visibility, committed work, baseline restoration, or an incomplete bounded overlay cannot cause rejection by themselves. If work is missing, the agent creates TODOs and continues. Otherwise, it calls `todo clear`, which archives the completed batch as `deleted` instead of erasing it, then sends one final report. `todo clear` rejects the operation while any pending, in-progress, or waiting task exists. Two completion reviews without state changes pause automation to prevent a loop.
 
 The final report preserves work context:
 
@@ -125,7 +125,7 @@ Condition actions:
 If the process emits:
 
 ```json
-{"type":"ready","count":1}
+{ "type": "ready", "count": 1 }
 ```
 
 request:
@@ -253,12 +253,12 @@ The parent agent must perform such actions after explicit approval.
 
 While the agent works, enter a message in the editor and submit it according to the desired behavior:
 
-| Key | Behavior |
-| --- | --- |
-| `Enter` | Queues a steering message. Current assistant turn finishes already-started tool calls, then the agent receives the message before its next model turn. |
-| `Alt+Enter` | Queues a follow-up. The message arrives only after all current work completes. |
-| `Escape` | Immediately aborts the current flow and returns queued messages to the editor. You can then submit a new instruction. |
-| `Alt+Up` | Returns queued steering and follow-up messages to the editor. |
+| Key         | Behavior                                                                                                                                               |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Enter`     | Queues a steering message. Current assistant turn finishes already-started tool calls, then the agent receives the message before its next model turn. |
+| `Alt+Enter` | Queues a follow-up. The message arrives only after all current work completes.                                                                         |
+| `Escape`    | Immediately aborts the current flow and returns queued messages to the editor. You can then submit a new instruction.                                  |
+| `Alt+Up`    | Returns queued steering and follow-up messages to the editor.                                                                                          |
 
 Use `Enter` to redirect work without losing the current tool result. It does not interrupt a running shell command or tool midway; it inserts the message at the next safe boundary. To stop the current tool or flow, use `Escape`, then submit a new instruction.
 
@@ -277,17 +277,17 @@ The system intentionally has no separate daemon. Nothing is monitored while Pi i
 
 ## Quick reference
 
-| Need | Use |
-| --- | --- |
-| View TODOs | `/todos` |
-| View jobs | `/jobs` |
-| View job details | `/jobs job-id` |
-| View background terminals | `/ps` |
-| Simple long-running process | background terminal |
-| Process with timeout or conditions | job |
-| Make a TODO wait for a process | `waiting:jobs` |
-| Ask the user a concrete question | `waiting:user` |
-| Run parallel multi-phase work | workflow |
+| Need                               | Use                 |
+| ---------------------------------- | ------------------- |
+| View TODOs                         | `/todos`            |
+| View jobs                          | `/jobs`             |
+| View job details                   | `/jobs job-id`      |
+| View background terminals          | `/ps`               |
+| Simple long-running process        | background terminal |
+| Process with timeout or conditions | job                 |
+| Make a TODO wait for a process     | `waiting:jobs`      |
+| Ask the user a concrete question   | `waiting:user`      |
+| Run parallel multi-phase work      | workflow            |
 
 ## Most important rules
 

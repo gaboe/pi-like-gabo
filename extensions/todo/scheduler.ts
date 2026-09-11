@@ -1579,6 +1579,127 @@ export function actionableContinuation(state = getState()): string {
   return taskContinuation(task);
 }
 
+type DelegationOwner = { taskId: number; token: string };
+type DelegationOwnersByTask = Map<number, { token: string; ids: string[] }>;
+
+function groupDelegationOwners(
+  owners: ReadonlyMap<string, DelegationOwner>,
+): DelegationOwnersByTask {
+  const grouped: DelegationOwnersByTask = new Map();
+  for (const [id, owner] of owners) {
+    const current = grouped.get(owner.taskId);
+    if (current) current.ids.push(id);
+    else grouped.set(owner.taskId, { token: owner.token, ids: [id] });
+  }
+  return grouped;
+}
+
+function reconcileLiveDelegationTask(
+  task: Task,
+  live: { token: string; ids: string[] },
+): Task {
+  const ids = live.ids;
+  const delegation = task.metadata?.delegation as
+    Record<string, unknown> | undefined;
+  const cancellationIds = uniqueWorkerIds(
+    Array.isArray(delegation?.cancellationIds)
+      ? delegation.cancellationIds
+      : [],
+  );
+  const cancellationOnly = cancellationIds.filter((id) => !ids.includes(id));
+  const expectedStatus = cancellationOnly.length ? "cancelling" : "running";
+  const alreadyReconciled =
+    delegation?.status === expectedStatus &&
+    delegation.todoId === task.id &&
+    delegation.todoToken === live.token &&
+    delegation.subagentId === ids[0] &&
+    Array.isArray(delegation.subagentIds) &&
+    delegation.subagentIds.length === ids.length &&
+    delegation.subagentIds.every((id, index) => id === ids[index]) &&
+    JSON.stringify(
+      uniqueWorkerIds(
+        Array.isArray(delegation.cancellationIds)
+          ? delegation.cancellationIds
+          : [],
+      ),
+    ) === JSON.stringify(cancellationOnly);
+  if (alreadyReconciled) return task;
+
+  const nextDelegation = {
+    ...delegation,
+    status: expectedStatus,
+    subagentIds: ids,
+    subagentId: ids[0],
+    todoId: task.id,
+    todoToken: live.token,
+    ...(cancellationOnly.length ? { cancellationIds: cancellationOnly } : {}),
+  };
+  if (!cancellationOnly.length) delete nextDelegation.cancellationIds;
+  return {
+    ...task,
+    metadata: { ...task.metadata, delegation: nextDelegation },
+  };
+}
+
+function reconcilePriorDelegationTask(
+  task: Task,
+  prior: { token: string; ids: string[] } | undefined,
+): Task {
+  const preparation = task.metadata?.preparation as
+    { token?: unknown } | undefined;
+  const delegation = task.metadata?.delegation as
+    Record<string, unknown> | undefined;
+  if (
+    !prior ||
+    preparation?.token !== prior.token ||
+    ["interrupted", "cancelling", "cancelled"].includes(
+      String(delegation?.status),
+    )
+  )
+    return task;
+  const ids = prior.ids;
+  if (
+    delegation?.status === "settled" &&
+    delegation.todoToken === prior.token &&
+    JSON.stringify(delegationWorkerIds(delegation)) ===
+      JSON.stringify(uniqueWorkerIds(ids))
+  )
+    return task;
+  return {
+    ...task,
+    metadata: {
+      ...task.metadata,
+      delegation: {
+        status: "settled",
+        subagentIds: ids,
+        subagentId: ids[0],
+        todoId: task.id,
+        todoToken: prior.token,
+      },
+    },
+  };
+}
+
+function reconcileDelegationTaskMetadata(
+  state: TaskState,
+  liveByTask: ReadonlyMap<number, { token: string; ids: string[] }>,
+  priorByTask: ReadonlyMap<number, { token: string; ids: string[] }>,
+): { tasks: Task[]; workerSettled: boolean } {
+  const tasks = state.tasks.map((task) => {
+    const live = liveByTask.get(task.id);
+    return live
+      ? reconcileLiveDelegationTask(task, live)
+      : reconcilePriorDelegationTask(task, priorByTask.get(task.id));
+  });
+  const workerSettled = tasks.some((task, index) => {
+    const before = state.tasks[index]?.metadata?.delegation as
+      { status?: unknown } | undefined;
+    const after = task.metadata?.delegation as { status?: unknown } | undefined;
+    return before?.status === "running" && after?.status === "settled";
+  });
+  return { tasks, workerSettled };
+}
+
 export class TodoScheduler {
   private active = false;
   private context: ExtensionContext | undefined;
@@ -3432,116 +3553,13 @@ export class TodoScheduler {
     this.retryCancellationIntents();
     state = getState();
 
-    const group = (
-      owners: ReadonlyMap<string, { taskId: number; token: string }>,
-    ) => {
-      const grouped = new Map<number, { token: string; ids: string[] }>();
-      for (const [id, owner] of owners) {
-        const current = grouped.get(owner.taskId);
-        if (current) current.ids.push(id);
-        else grouped.set(owner.taskId, { token: owner.token, ids: [id] });
-      }
-      return grouped;
-    };
-    const liveByTask = group(nextOwners);
-    const priorByTask = group(this.delegatedWorkerOwners);
-    const tasks = state.tasks.map((task) => {
-      const live = liveByTask.get(task.id);
-      if (live) {
-        const ids = live.ids;
-        const delegation = task.metadata?.delegation as
-          Record<string, unknown> | undefined;
-        const cancellationIds = uniqueWorkerIds(
-          Array.isArray(delegation?.cancellationIds)
-            ? delegation.cancellationIds
-            : [],
-        );
-        const cancellationOnly = cancellationIds.filter(
-          (id) => !ids.includes(id),
-        );
-        const expectedStatus = cancellationOnly.length
-          ? "cancelling"
-          : "running";
-        if (
-          delegation?.status === expectedStatus &&
-          delegation.todoId === task.id &&
-          delegation.todoToken === live.token &&
-          delegation.subagentId === ids[0] &&
-          Array.isArray(delegation.subagentIds) &&
-          delegation.subagentIds.length === ids.length &&
-          delegation.subagentIds.every((id, index) => id === ids[index]) &&
-          JSON.stringify(
-            uniqueWorkerIds(
-              Array.isArray(delegation.cancellationIds)
-                ? delegation.cancellationIds
-                : [],
-            ),
-          ) === JSON.stringify(cancellationOnly)
-        )
-          return task;
-        const nextDelegation = {
-          ...delegation,
-          status: expectedStatus,
-          subagentIds: ids,
-          subagentId: ids[0],
-          todoId: task.id,
-          todoToken: live.token,
-          ...(cancellationOnly.length
-            ? { cancellationIds: cancellationOnly }
-            : {}),
-        };
-        if (!cancellationOnly.length) delete nextDelegation.cancellationIds;
-        return {
-          ...task,
-          metadata: {
-            ...task.metadata,
-            delegation: nextDelegation,
-          },
-        };
-      }
-
-      const prior = priorByTask.get(task.id);
-      const preparation = task.metadata?.preparation as
-        { token?: unknown } | undefined;
-      const delegation = task.metadata?.delegation as
-        Record<string, unknown> | undefined;
-      if (
-        !prior ||
-        preparation?.token !== prior.token ||
-        ["interrupted", "cancelling", "cancelled"].includes(
-          String(delegation?.status),
-        )
-      )
-        return task;
-      const ids = prior.ids;
-      if (
-        delegation?.status === "settled" &&
-        delegation.todoToken === prior.token &&
-        JSON.stringify(delegationWorkerIds(delegation)) ===
-          JSON.stringify(uniqueWorkerIds(ids))
-      )
-        return task;
-      return {
-        ...task,
-        metadata: {
-          ...task.metadata,
-          delegation: {
-            status: "settled",
-            subagentIds: ids,
-            subagentId: ids[0],
-            todoId: task.id,
-            todoToken: prior.token,
-          },
-        },
-      };
-    });
-    const workerSettled = tasks.some((task, index) => {
-      const before = state.tasks[index]?.metadata?.delegation as
-        { status?: unknown } | undefined;
-      const after = task.metadata?.delegation as
-        { status?: unknown } | undefined;
-      return before?.status === "running" && after?.status === "settled";
-    });
+    const liveByTask = groupDelegationOwners(nextOwners);
+    const priorByTask = groupDelegationOwners(this.delegatedWorkerOwners);
+    const { tasks, workerSettled } = reconcileDelegationTaskMetadata(
+      state,
+      liveByTask,
+      priorByTask,
+    );
 
     this.delegatedWorkerOwners.clear();
     for (const [id, owner] of nextOwners)
@@ -4440,20 +4458,22 @@ export class TodoScheduler {
         void error;
       });
     };
+    const failAndRetry = (feedback: string): void => {
+      if (!current()) return;
+      const next = failCompletionReview(getState(), identity, feedback);
+      if (!current()) return;
+      if (this.commitReviewState(next)) {
+        this.onStateChanged();
+        this.armCompletionReviewRetry();
+      }
+    };
     try {
       run.monitor = await startReviewMutationMonitor(reviewCwd);
       if (!current()) return;
       if (run.monitor.changed()) {
-        const next = failCompletionReview(
-          getState(),
-          identity,
+        failAndRetry(
           "Completion review blocked: workspace changed or watcher coverage was unavailable during review initialization; retry against the current worktree.",
         );
-        if (!current()) return;
-        if (this.commitReviewState(next)) {
-          this.onStateChanged();
-          this.armCompletionReviewRetry();
-        }
         return;
       }
       if (!current()) return;
@@ -4489,15 +4509,9 @@ export class TodoScheduler {
       if (!current()) return;
       if (run.monitor && (await run.monitor.check())) {
         if (!current()) return;
-        const next = failCompletionReview(
-          getState(),
-          identity,
+        failAndRetry(
           "Completion review blocked: workspace changed during the coherent snapshot; retry against the current worktree.",
         );
-        if (this.commitReviewState(next)) {
-          this.onStateChanged();
-          this.armCompletionReviewRetry();
-        }
         return;
       }
       if (!current()) return;
@@ -4550,28 +4564,16 @@ export class TodoScheduler {
       if (!current()) return;
       if (run.monitor && (await run.monitor.check())) {
         if (!current()) return;
-        const next = failCompletionReview(
-          getState(),
-          identity,
+        failAndRetry(
           "Completion review rejected: workspace changed during review; snapshot changed, including a transient or reverted edit.",
         );
-        if (this.commitReviewState(next)) {
-          this.onStateChanged();
-          this.armCompletionReviewRetry();
-        }
         return;
       }
       if (!current()) return;
       if (!targetStillValid()) {
-        const next = failCompletionReview(
-          getState(),
-          identity,
+        failAndRetry(
           "Completion review rejected: the validated checkout identity changed during review.",
         );
-        if (this.commitReviewState(next)) {
-          this.onStateChanged();
-          this.armCompletionReviewRetry();
-        }
         return;
       }
       const currentOverlay = requiresOverlay
@@ -4580,40 +4582,22 @@ export class TodoScheduler {
       if (!current()) return;
       if (run.monitor && (await run.monitor.check())) {
         if (!current()) return;
-        const next = failCompletionReview(
-          getState(),
-          identity,
+        failAndRetry(
           "Completion review rejected: workspace changed during final snapshot validation; retry against the current worktree.",
         );
-        if (this.commitReviewState(next)) {
-          this.onStateChanged();
-          this.armCompletionReviewRetry();
-        }
         return;
       }
       if (!current()) return;
       if (!targetStillValid()) {
-        const next = failCompletionReview(
-          getState(),
-          identity,
+        failAndRetry(
           "Completion review rejected: the validated checkout identity changed before final settlement.",
         );
-        if (this.commitReviewState(next)) {
-          this.onStateChanged();
-          this.armCompletionReviewRetry();
-        }
         return;
       }
       if (reviewOverlayDigest(currentOverlay) !== overlayDigest) {
-        const next = failCompletionReview(
-          getState(),
-          identity,
+        failAndRetry(
           "Completion review snapshot changed while the reviewer was running; retry against the current worktree.",
         );
-        if (this.commitReviewState(next)) {
-          this.onStateChanged();
-          this.armCompletionReviewRetry();
-        }
         return;
       }
       if (!current()) return;
@@ -4626,15 +4610,9 @@ export class TodoScheduler {
         settledInputs.review?.inputDigest !== inputDigest ||
         reviewInputDigest(settledInputs) !== inputDigest
       ) {
-        const next = failCompletionReview(
-          getState(),
-          identity,
+        failAndRetry(
           "Completion review inputs changed while the reviewer was running; retry against the current TODO record.",
         );
-        if (this.commitReviewState(next)) {
-          this.onStateChanged();
-          this.armCompletionReviewRetry();
-        }
         return;
       }
       if (!current()) return;

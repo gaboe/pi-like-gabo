@@ -21,8 +21,9 @@ The approved product is a persistent inbox with asynchronous preparation, an idl
 6. Propagate failed prerequisites transitively while allowing independent branches to continue.
 7. Bound executor/verifier correction exchanges at three. The third unresolved exchange fails the task. Persist verifier findings, evidence, and rationale, including parent challenges or skips supported by persuasive evidence or a prior user message.
 8. Reconcile durable ownership after restart/reload. Automatically recover safe work; inspect current workspace state before resuming interrupted mutation. Edits and cancellation enter through the main prompt.
-9. Recover internal verifier failures automatically. Do not present Retry/Revise for an operational failure.
-10. Refactor the current implementation in place. The existing replay/state store remains the only authoritative store; new components communicate through canonical task identity and lifecycle events.
+9. Treat completion review as requirement-completeness verification, not code review. Approve when result and concrete evidence plausibly satisfy every explicit requirement. Reject only a concrete material omission, contradiction, missing mandatory check, or plainly premature closure. Workspace diffs are supporting context rather than a mandatory proof boundary; committed work, external-worktree evidence, baseline restoration, or an incomplete bounded overlay are not rejection reasons by themselves.
+10. Recover internal verifier failures automatically. Do not present Retry/Revise for an operational failure.
+11. Refactor the current implementation in place. The existing replay/state store remains the only authoritative store; new components communicate through canonical task identity and lifecycle events.
 
 ## Consequences
 

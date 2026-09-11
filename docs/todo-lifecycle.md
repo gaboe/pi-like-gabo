@@ -29,7 +29,7 @@ stateDiagram-v2
         [*] --> ReviewPending
         ReviewPending --> ReviewRunning: reviewer owns dispatchedAt
         ReviewRunning --> ReviewApproved: evidence accepted
-        ReviewRunning --> SemanticRejected: implementation or evidence rejected
+        ReviewRunning --> SemanticRejected: concrete explicit requirement unmet
         ReviewRunning --> OperationalFailure: crash, timeout, snapshot race
         OperationalFailure --> ReviewPending: FIX-1 owner release and bounded retry
     }
@@ -53,14 +53,14 @@ stateDiagram-v2
 
 ## Corrected bug map
 
-| Marker | Broken behavior | Corrected transition or boundary | Regression evidence |
-| --- | --- | --- | --- |
-| **FIX-1** | A reviewer exception could leave `review.status: pending` with no active owner and no future dispatch. | Every review run re-arms retry from its common `finally` boundary after removing active ownership. | `extensions/todo/completion-review-orphan-retry.test.mjs` |
-| **FIX-2** | A job or review approval could expose a pending task without restarting its queued preparation or waking the parent. | Job/review wake → ready → same-token preparation restart → actionable selection → bounded parent continuation. | TODO scheduler wake and descendant-continuation regressions in `extensions/todo/state/enhancements.test.mjs` and `extensions/todo/todo-orchestrator-acceptance.test.mjs` |
-| **FIX-3** | Old failed verification metadata survived fresh completion and kept descendants displayed as stale `failed prerequisite` tasks. | Fresh completion removes superseded verification failure; propagation removes inherited failure while preserving `blockedBy`. | `extensions/todo/state/inbox.test.mjs` |
-| **FIX-4** | Unsupported persisted reviewer selectors could repeatedly fail after reload. | Reviewer model normalization occurs before dispatch; narrowly recognized obsolete-model failures are requeued on replay. | `extensions/todo/state/completion-operational-exhaustion.test.mjs` |
-| **FIX-5** | A rejected `ask_user` UI promise skipped deadline cleanup and held the vendor Node process open. | Deadline cleanup now executes in `finally` for success, cancellation, and rejection. | `vendor/pi-tools/extensions/ask-user/context.test.ts` |
-| **FIX-6** | Large dirty worktrees could lose a review baseline or exceed blob-diff capture limits. | Baselines accept 128 paths and 64 KiB metadata; blob capture is bounded before the 24,000-character overlay truncation. | Boundary and large-blob regressions in `extensions/todo/state/enhancements.test.mjs` |
+| Marker    | Broken behavior                                                                                                                 | Corrected transition or boundary                                                                                              | Regression evidence                                                                                                                                                      |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **FIX-1** | A reviewer exception could leave `review.status: pending` with no active owner and no future dispatch.                          | Every review run re-arms retry from its common `finally` boundary after removing active ownership.                            | `extensions/todo/completion-review-orphan-retry.test.mjs`                                                                                                                |
+| **FIX-2** | A job or review approval could expose a pending task without restarting its queued preparation or waking the parent.            | Job/review wake → ready → same-token preparation restart → actionable selection → bounded parent continuation.                | TODO scheduler wake and descendant-continuation regressions in `extensions/todo/state/enhancements.test.mjs` and `extensions/todo/todo-orchestrator-acceptance.test.mjs` |
+| **FIX-3** | Old failed verification metadata survived fresh completion and kept descendants displayed as stale `failed prerequisite` tasks. | Fresh completion removes superseded verification failure; propagation removes inherited failure while preserving `blockedBy`. | `extensions/todo/state/inbox.test.mjs`                                                                                                                                   |
+| **FIX-4** | Unsupported persisted reviewer selectors could repeatedly fail after reload.                                                    | Reviewer model normalization occurs before dispatch; narrowly recognized obsolete-model failures are requeued on replay.      | `extensions/todo/state/completion-operational-exhaustion.test.mjs`                                                                                                       |
+| **FIX-5** | A rejected `ask_user` UI promise skipped deadline cleanup and held the vendor Node process open.                                | Deadline cleanup now executes in `finally` for success, cancellation, and rejection.                                          | `vendor/pi-tools/extensions/ask-user/context.test.ts`                                                                                                                    |
+| **FIX-6** | Large dirty worktrees could lose a review baseline or exceed blob-diff capture limits.                                          | Baselines accept 128 paths and 64 KiB metadata; blob capture is bounded before the 24,000-character overlay truncation.       | Boundary and large-blob regressions in `extensions/todo/state/enhancements.test.mjs`                                                                                     |
 
 ## Actionable selection and continuation
 
@@ -77,6 +77,8 @@ Operational failures do not ask the user to approve broken infrastructure. The r
 
 Semantic rejection is different: it returns the task to actionable remediation and requires changed completion evidence before another review.
 
+Completion review verifies requirement completeness; it is not a code-quality or architecture review. The reviewer approves when the result and concrete evidence plausibly satisfy every explicit requirement and rejects only a named material gap, contradiction, missing mandatory check, or plainly premature closure. The bounded workspace diff supports this judgment but is not an absolute proof boundary. Missing diff visibility, an unavailable baseline, baseline restoration, an incomplete overlay, committed work, or evidence from a validated external worktree cannot cause rejection by themselves.
+
 ## Dependency recovery
 
 A semantic source failure marks descendants with `failed prerequisite`. Fresh completion evidence removes stale failed verification metadata while preserving unrelated metadata and `blockedBy` edges. Once the source is no longer a semantic failure, propagation removes inherited failure metadata and descendants become ready again.
@@ -87,9 +89,6 @@ A semantic source failure marks descendants with `failed prerequisite`. Fresh co
 
 `herdr:blocked` is reserved for actual user input or approval. Preparation, completion review, subagents, and jobs are background work. A job wait is displayed with a running marker such as `▶ running · mode: jobs` rather than pretending the user is blocking it.
 
-## Verification and delivery evidence
+## Verification evidence
 
-- Comprehensive `npm run check` passed on the committed tree: root tests `653/653`, vendor Node tests `320/320`, file-search tests `23/23`, plus root/vendor typecheck and formatting checks.
-- Commit `0a04c4bcb3a633b8d9315a4c062830ddaf420582` was pushed normally to `origin/feature/pi-hardening-suite` and local/remote HEAD matched.
-- The commit recorded 120 paths: 102 modified, 17 added, and one intentional tracked deletion.
-- Later review-remediation changes are intentionally assigned to TODO #17 for a follow-up commit and push after their completion reviews approve.
+Release-specific commits and test counts belong to Git history and completion-review evidence rather than this lifecycle contract. Changes to these transitions must retain focused lifecycle regressions and pass the repository checks defined in `package.json`.
