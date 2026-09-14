@@ -25,16 +25,11 @@ Do not manufacture ceremony. Inspect the current relevant source/state, gather m
 
 ### Hard consequential technical work
 
-Use 2–4 distinct lanes when their evidence can change the result, subject to a global four-worker cap and mutation conflicts. Prefer maximal coherent perspectives over file-sized tasks.
+Use 2–4 distinct lanes when their evidence can change the result, subject to the concurrent-worker cap and mutation conflicts. Prefer maximal coherent perspectives over file-sized tasks.
 
-Resolve the harness once before spawning:
+The `orchestrator` skill owns the delegation contract and this skill does not restate it: harness resolution, the concurrent-worker cap, model and effort selection, turn budgets, the handoff reserve, and bounded continuation. Load it before the first spawn, including its harness mappings.
 
-1. Use the host's native worker or installed delegation adapter.
-2. Pass a named harness only when the active spawn schema exposes that selector.
-3. Otherwise use the current host's native worker and never pass unsupported fields.
-4. Use only models and effort levels exposed by the selected harness; never copy provider-specific model ids across harnesses.
-
-After identifying the host, load [references/harnesses.md](references/harnesses.md) for concrete tool, model, and fallback mappings.
+**Competing candidates.** When the artifact admits several valid shapes, lanes produce N candidates of the *same* artifact instead of splitting evidence. Derive 3–6 gradeable criteria before spawning; candidates never see them. Each writes to its own path, because N candidates on one path is shared mutable state. Route the runners through the active host's section of the `orchestrator` harness mappings; running N candidates on one model is correct when the work is generation-bound rather than judgment-sensitive. Read every candidate end to end, pick the base on which a maintainer extends most easily, then graft what is worth porting from the losers by hand and record what was rejected and why. Convergence on one shape is a result; wild divergence means the framing was under-specified, so reframe rather than average.
 
 Typical lanes are authoritative source/documentation inspection, runtime or deterministic verification, implementation/synthesis, and independent adversarial review. Start safe read-only lanes in parallel. Serialize overlapping writes, shared worktree/ref mutations, and work whose premise is changing. More agents are not evidence by themselves, and duplicate generic reviews do not count as independent lanes.
 
@@ -49,19 +44,18 @@ Maintain a compact ledger for every decisive claim. It may live in the response,
 | Decisive claim | Authoritative source or check | Independent verifier result | Disagreement and resolution | Residual uncertainty / confidence |
 | --- | --- | --- | --- | --- |
 
-A verifier must independently inspect or reproduce the evidence, not merely agree with the synthesis. Resolve disagreements using stronger source/runtime evidence or one focused tie-breaker, never majority vote. Preserve unresolved disagreement in the ledger.
+A verifier must independently inspect or reproduce the evidence, not merely agree with the synthesis. A verifier on the parent's own harness shares its priors, so cross harnesses for the independent lane when a second one is installed and credentialed. When only one harness is available, record in the ledger that the verifier shared the parent's family and lower the confidence rather than reporting the check as independent. Resolve disagreements using stronger source/runtime evidence or one focused tie-breaker, never majority vote. Preserve unresolved disagreement in the ledger.
 
 Never claim literal 100% certainty or infallibility. If a decisive claim cannot be verified, name the missing evidence, lower confidence, and return a partial/qualified result rather than presenting it as complete.
 
 ## Execution discipline
 
 1. Use the lightest plan that can satisfy the relevant completion gate. Hard consequential mutable work gets an evidence-backed preparation dossier and meaningful durable phases in the host's native plan/TODO mechanism; trivial work may proceed directly.
-2. Give each lane a self-contained scope, permissions, stale conditions, done criteria, harness/model/effort, and explicit turn budget. Use native workers by default; cross-harness work goes through an installed delegation adapter or explicitly supported harness selector, never an improvised raw process when a first-class transport exists.
-3. Estimate orientation, work, focused verification, and handoff. Keep trivial tasks small. Use 8–12 turns for narrow scouts, 16–24 for broad review/planning, 24–32 for focused implementation, and 32–48 only for one justified cohesive multi-file/root-cause package.
-4. When the harness uses turn budgets, reserve the final two worker turns for verification summary and handoff. Before the reserve, a worker with bounded remaining work returns `partial` with exact `budget_request`, reason, and non-empty `remaining_work`. Approve at most one exact extension within that harness's cap. Never auto-extend, revive a hard-limit failure, or extend nested work.
-5. Run checks. Put commands likely to exceed 30 seconds or repeated external waits in the host's bounded monitor, continue independent work, and rely on completion/wake events when supported. Do not poll a first-class monitor. Terminal evidence requires inspection.
-6. Require independent adversarial review against the final current source/diff/state. Resolve findings or record them as residual risk.
-7. When the host uses package workers, require its schema-valid handoff contract; mechanical validity is not semantic acceptance.
+2. Give each lane a self-contained scope, permissions, stale conditions, and done criteria. A lane whose premise another lane is currently changing is not self-contained.
+3. Size every lane's budget through the `orchestrator` seed contract. Keep trivial tasks small, and never raise a budget to avoid narrowing an oversized scope.
+4. Run checks. Put commands likely to exceed 30 seconds or repeated external waits in the host's bounded monitor, continue independent work, and rely on completion/wake events when supported. Do not poll a first-class monitor. Terminal evidence requires inspection.
+5. Require independent adversarial review against the final current source/diff/state. Resolve findings or record them as residual risk.
+6. When the host uses package workers, require its schema-valid handoff contract; mechanical validity is not semantic acceptance.
 
 ## Completion gates
 
