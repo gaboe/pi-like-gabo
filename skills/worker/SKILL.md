@@ -1,8 +1,7 @@
 ---
 name: worker
-description: Drive a coding agent as a long-running implementation worker in a Herdr pane, and review its claims against receipts.
+description: Drive a coding agent as a long-running implementation worker in a Herdr pane, and review its claims against receipts. Reach for it when the work is measured in files touched and build-test-fix iterations rather than in judgement calls - a mechanical port of a finished change into a sibling repo, a long green loop, a bounded refactor across many call sites - and when an existing worker needs continuing or checking, or several must be fanned out in parallel and their results joined. Requires HERDR_ENV=1.
 argument-hint: "Worker profile (luna) and the task, or empty to continue an existing worker"
-disable-model-invocation: true
 ---
 
 # worker
@@ -253,10 +252,40 @@ that worker and start a fresh one. The test is whether the accumulated context w
 *noise* for what comes next.
 
 **Run several at once when the work is genuinely parallel.** Separate subsystems, separate panes,
-separate names — `luna-ingest` and `luna-tui` do not need to wait for each other. What they must not
-share is a file: overlapping scopes in one tree produce two workers reverting each other, so give each
-one an explicit set of paths and keep those sets disjoint. Where they cannot be, sequence the work
-instead of parallelising it.
+separate names — `luna-ingest` and `luna-tui` do not need to wait for each other. Decide the shape
+before dispatch rather than after: parallel is the default whenever the task decomposes, and
+sequencing is the fallback for when it does not.
+
+Two decompositions are worth the panes:
+
+- **Partition** — one slice each, every slice must land. Coverage work: a port across six call
+  sites, a rename over four modules, a suite split by project.
+- **Race** — the same brief to every worker, one result survives. Worth it when the approach is
+  unknown rather than the work large. Declare the selection rule *before* fan-out — first pass,
+  rank all, or best-of — or the aggregation becomes whatever the last report happened to argue.
+
+A slice qualifies when it is **disjoint** and **independently verifiable**: its own explicit set of
+paths, no file shared with another slice, and a gate that can go green without waiting for a sibling.
+Both, or it is not a slice. Overlapping scopes in one tree produce two workers reverting each other;
+where the paths cannot be separated, give each worker its own worktree or sequence the work. Width is
+the number of slices that pass that test, not a number you pick.
+
+**Burst means no driver round-trip between slices, never a worker without its gate.** Dispatch every
+slice in one go, monitor them together, and let each worker run its own check and write its own work
+record as usual. What the burst skips is your per-worker approval, not their verification: a slice
+that arrives ungated gives the join nothing to merge against, and N unverified diffs cost more to
+untangle than the round-trips saved. N workers also burn N times the tokens, and a race burns them on
+N-1 results you discard.
+
+**The join is a worker's hands and your judgement.** A follow-up worker resolves the merge
+mechanically — explicit paths only, one commit per slice so a bad slice reverts alone. What survives,
+and whether the seam between two slices is right, stays with you: read the N work records, then re-run
+the decisive receipts yourself against the merged tree. A green gate per slice says nothing about the
+code between them.
+
+**Keep each worker open until its slice passes the join.** Fixes go back to the agent that wrote the
+code, which still holds why it is shaped that way. Bursting and closing throws that context away at
+the exact moment the join needs it, and hands the repair to whoever happens to be idle.
 
 Close the panes and agents you created once their work is done.
 
