@@ -277,6 +277,10 @@ that arrives ungated gives the join nothing to merge against, and N unverified d
 untangle than the round-trips saved. N workers also burn N times the tokens, and a race burns them on
 N-1 results you discard.
 
+A worker that dies mid-burst is an ordinary event, not an incident to investigate: proceed with N-1,
+say which slice is missing, and reseed it only if its slice still has to land. A partition needs every
+slice, so one dropout blocks the join; a race does not.
+
 **The join is a worker's hands and your judgement.** A follow-up worker resolves the merge
 mechanically — explicit paths only, one commit per slice so a bad slice reverts alone. What survives,
 and whether the seam between two slices is right, stays with you: read the N work records, then re-run
