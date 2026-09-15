@@ -1,7 +1,7 @@
 ---
 name: worker
-description: Drive a coding agent as a long-running implementation worker in a Herdr pane, and review its claims against receipts.
-argument-hint: "Worker profile (luna) and the task, or empty to continue an existing worker"
+description: Drive a coding agent through one bounded implementation deliverable in a Herdr pane, and review its claims against receipts.
+argument-hint: "Worker profile (luna) and the bounded deliverable, or empty for an immediate fix or re-review"
 disable-model-invocation: true
 ---
 
@@ -126,15 +126,13 @@ same span side by side, report wall-clock each, and say which you would ship" be
 
 ## Continuing, and knowing when to stop
 
-Accumulated context is the expensive part, so **related work continues in the same worker** — the one
-that just fixed the window planner already knows why the windows are measured in audio seconds. Reuse
-the name and keep going.
+**Bounded deliverables are the default.** Give each worker one bounded deliverable, then close it when
+that deliverable passes the driver's gate. Start a fresh worker for a new review point or materially
+new change. Reuse the same worker only for an immediate fix or re-review of its own slice, when its
+accumulated context is evidence for that exact slice.
 
-**Unrelated work gets a new agent.** A worker holding a hundred thousand tokens about one subsystem is
-worse than empty for a different problem: you pay for all of it on every turn, and it carries
-assumptions from the old task into the new one, confidently. When the subject genuinely changes, close
-that worker and start a fresh one. The test is whether the accumulated context would be *evidence* or
-*noise* for what comes next.
+For a slice that needs repair, send the immediate fix and its re-review back to the worker that wrote
+it. Keep that worker open until the slice passes the join, then close it.
 
 **Run several at once when the work is genuinely parallel.** Separate subsystems, separate panes,
 separate names — `luna-ingest` and `luna-tui` do not need to wait for each other. What they must not
