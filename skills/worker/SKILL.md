@@ -156,6 +156,23 @@ worker which reasons but never executes — the missing `codex-code-mode-host` f
 For harness adapters, timeout recovery, `blocked`/`unknown`/`agent_not_found`, artifact capture, or a
 reviewer sharing the worktree, read [monitoring.md](monitoring.md).
 
+## Worker self-check
+
+Include this self-check in every implementation seed. The worker completes it before its
+result callback, within the assigned budget and handoff reserve:
+
+1. Read the final owned diff against the seed and applicable repository rules. Account for
+   every in-scope requirement and caller affected by the change.
+2. Check the changed behavior's failure paths and relevant edge cases against actual code,
+   assertions, and receipts. Reuse completed focused checks; rerun when code changed, a check
+   failed, or a specific concern remains.
+3. Fix omissions within the owned scope, then record a short self-check verdict and decisive
+   evidence in the work record. Report unresolved concerns or scope gaps as `partial` or
+   `blocked`, with the exact remaining work.
+
+Hand off as `done` when requirements are accounted for, required checks passed, and no known
+in-scope defect remains. The driver still performs the independent review and integration gate.
+
 ## Receipts
 
 **A claim without a receipt is a claim.** A receipt is the command plus the decisive line of its
