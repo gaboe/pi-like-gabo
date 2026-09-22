@@ -128,6 +128,20 @@ Use no `--wait`: this is a handoff notification, not worker acceptance of the or
 turn. The result prompt supplements the required work record; it does not replace receipts or the
 driver's gate.
 
+## Two planes
+
+`agent prompt` is the **data** plane: text the worker reads and reasons about. Lifecycle runs on the
+**control** plane — `herdr agent stop`, a fresh `agent start`, `send-keys enter`. Keep the two apart.
+A stop written as text arrives as something the worker *thinks about*: it finishes the turn first,
+argues the point, or complies three edits later, and the pane looks the same either way.
+
+A control action is done when its state is observable, not when the command exits 0. Read the
+postcondition back — `herdr agent get <name>` after a stop, `pane list` after a close.
+
+On the data plane the pane is a **doorbell**, not the delivery: the instruction goes to a file the
+worker acknowledges by moving it, so a swallowed prompt or a dead pane is visible instead of silent.
+For the inbox layout, the seed text, and the acknowledgement ladder, read [steering.md](steering.md).
+
 ## Monitor Herdr workers
 
 A **monitor** is the current host harness's background wait-and-wake capability, not a named tool.

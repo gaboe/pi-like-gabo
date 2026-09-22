@@ -26,6 +26,9 @@ Fixed headings, terse, under a screen.
 
 ## Blocked
 - <what needs the real world, a human, or another decision>
+
+## Remember
+- <lesson that outlives this task, or drop the section>
 ```
 
 Every Verified line carries its command; a claim without one belongs under Not verified.
@@ -33,6 +36,11 @@ Every Verified line carries its command; a claim without one belongs under Not v
 **Not verified always has content.** It is the highest-value section and the first a worker drops.
 
 Decided carries the rejected alternative, or the decision reopens in a month.
+
+Remember holds what the next task needs, not this one's outcome — a gotcha, a convention the code does
+not state, a path that cost an hour to find. The worker proposes; the driver decides what survives and
+writes its own summary, because pasting the worker's wording into durable memory imports its framing
+with it.
 
 The header states staged versus committed, because a change held back pending a real-world test is a
 different thing from one that landed, and a reader cannot tell from the diff.

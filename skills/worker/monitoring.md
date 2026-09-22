@@ -26,6 +26,18 @@ Monitor state and worker state are separate:
 
 After a timeout, run `herdr agent get <name>` and one bounded `herdr agent read <name>` exactly once. Then re-arm one monitor or handle the terminal state.
 
+## What needs you first
+
+Worker state answers what the pane is doing. A driver holding several workers needs the other question — what is mine to act on now. Classify each live worker by the first rule that matches, and work them in that order:
+
+1. **Ready for review**: a work record exists that you have not gated. Yours, and the cheapest to clear.
+2. **Waiting on you**: `agent_not_found`, a pane gone with no work record, a launch that never reached `working`, an unhandled steer after its third ring, or `blocked` for longer than one monitor window.
+3. **Working**: `working`, or `blocked` inside the current monitor window.
+4. **Landing**: gated and pushed, waiting only on CI or a merge.
+5. **Idle**: settled with nothing outstanding; free for related work.
+
+`blocked` briefly is a permission dialog in the ordinary course of work; `blocked` past a window is a question addressed to you. The debounce is the whole difference, and without it every dialog reads as a problem.
+
 ## Target and artifacts
 
 Target the unique agent name. Model labels, pane titles, terminal IDs, and provider session IDs are not stable cross-harness targets.
