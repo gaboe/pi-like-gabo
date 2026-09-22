@@ -228,6 +228,16 @@ Seeding a worker means requiring its work record: read
 [`work-record.md`](work-record.md) for the headings and the rules behind them. Every task hands one
 back, or you are reconstructing state by hand next round.
 
+The worker holds none of this skill, so the seed carries the requirement itself. A local worker gets
+the path — the file is authoritative and a pasted copy drifts from it:
+
+```text
+Work record: <absolute path to work-record.md> — write yours to <record path> using those headings.
+```
+
+A worker on another machine gets the headings pasted instead. Either way `## Remember` reaches the
+seed, which is the only reason a lesson ever comes back.
+
 ## Shared tree
 
 The worker has the tree open while you work in it, so:
