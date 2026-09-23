@@ -6,7 +6,7 @@ test("summary config defaults to Codex Luna at medium reasoning", () => {
   assert.deepEqual(parseSummaryConfig(undefined), DEFAULT_SUMMARY_CONFIG);
   assert.deepEqual(DEFAULT_SUMMARY_CONFIG, {
     provider: "openai-codex",
-    model: "gpt-5.6-luna",
+    model: "gpt-6-luna",
     reasoning: "medium",
   });
 });

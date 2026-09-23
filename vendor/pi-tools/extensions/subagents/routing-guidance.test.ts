@@ -27,7 +27,7 @@ for (const [name, guidance] of [
     );
     assert.match(
       text,
-      /Terra low for ambiguous root causes, domain decisions, or broad\/coupled multi-file implementation/,
+      /Luna medium for ambiguous root causes or broad\/coupled multi-file implementation/,
     );
     assert.match(text, /Sol low for routine review/);
     assert.match(text, /Sol medium for planning or complex synthesis/);
@@ -54,14 +54,14 @@ test("workflow tool description matches effort-aware Luna routing", () => {
 test("subagent routing distinguishes tiers from exact Pi model hints", () => {
   const text = SUBAGENT_SPAWN_PROMPT_GUIDELINES.join("\n");
   assert.match(text, /routing tiers, not valid Pi model hints/);
-  assert.match(text, /openai-codex\/gpt-5\.6-terra/);
+  assert.match(text, /openai-codex\/gpt-6-sol/);
   assert.match(text, /exact model tiers/);
-  assert.match(text, /gpt-5\.6-luna/);
+  assert.match(text, /gpt-6-luna/);
   assert.match(text, /exact model tiers/);
   assert.match(text, /8-12 for narrow mechanical scouts/);
   assert.match(text, /24-32 for focused implementation/);
   assert.match(text, /two final turns reserved/);
-  assert.match(text, /never the shorthand luna, terra, or sol/);
+  assert.match(text, /never the shorthand luna or sol/);
 });
 
 test("subagent routing keeps semantic corrections on the owning worker", () => {

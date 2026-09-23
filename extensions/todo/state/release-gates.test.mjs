@@ -54,7 +54,7 @@ const approvedReview = () => ({
   dispatchedAt: 2,
   reviewer: {
     id: "todo-completion-reviewer",
-    model: "openai-codex/gpt-5.6-luna",
+    model: "openai-codex/gpt-6-luna",
   },
   feedback: "verified",
 });

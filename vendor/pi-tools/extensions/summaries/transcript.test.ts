@@ -82,7 +82,7 @@ test("transcript omits thinking, images, and recap entries while redacting tool 
       ],
       api: "openai-codex-responses",
       provider: "openai-codex",
-      model: "gpt-5.6-luna",
+      model: "gpt-6-luna",
       usage,
       stopReason: "toolUse",
       timestamp: 1,

@@ -192,7 +192,7 @@ export default function whatsNext(pi: ExtensionAPI): void {
         result = await service.run({
           title: "Review what comes next",
           cwd: ctx.cwd,
-          model: "openai-codex/gpt-5.6-terra",
+          model: "openai-codex/gpt-6-luna",
           reasoningEffort: "low",
           maxTurns: 1,
           timeoutMs: 30_000,

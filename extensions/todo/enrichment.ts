@@ -1066,7 +1066,7 @@ export async function requestTodoAnalysis(
   const result = await service.run({
     title: `Prepare TODO: ${provisionalTodoSubject(redactTodoText(raw))}`,
     cwd: preparationCwd,
-    model: "openai-codex/gpt-5.6-terra",
+    model: "openai-codex/gpt-6-luna",
     reasoningEffort: "low",
     maxTurns: 12,
     timeoutMs: 180_000,
@@ -1131,7 +1131,7 @@ export async function requestTodoReorder(
   const result = await service.run({
     title: "Propose safe TODO order",
     cwd: ctx.cwd,
-    model: "openai-codex/gpt-5.6-luna",
+    model: "openai-codex/gpt-6-luna",
     reasoningEffort: "low",
     maxTurns: 4,
     timeoutMs: 60_000,

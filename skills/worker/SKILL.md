@@ -29,7 +29,7 @@ it was measured at the moment you wrote it.
 
 ```bash
 herdr agent start luna --kind codex --pane <pane-id> --timeout 60000 -- \
-  -m gpt-5.6-luna -c model_reasoning_effort="high"
+  -m gpt-6-luna -c model_reasoning_effort="high"
 ```
 
 **A codex pane that reasons but never runs a command has a broken install, not a bad seed.** Every
@@ -73,7 +73,7 @@ self-describing when five panes are open and turns every later command into the 
 `herdr agent prompt luna-fix …` needs no lookup. Names match `[a-z][a-z0-9_-]{0,31}`, follow the pane
 occupant, and free up when that agent exits, so a role name is reusable for its successor.
 
-Gabo's read on the alternatives, which no `--help` will tell you: sol and terra do not suit worker
+Gabo's read on the alternatives, which no `--help` will tell you: sol does not suit worker
 duty. Grok is a valid `--kind` and could take a pane, but has no sub-agents, so it cannot fan out
 underneath itself. Add a profile here when one earns it.
 

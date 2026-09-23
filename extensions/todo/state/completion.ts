@@ -3,14 +3,13 @@ import { delegationWorkerIds } from "./state.js";
 import { publicTodoState } from "./inbox.js";
 
 // Kept independent from the configured candidate so a bad selector edit still falls back.
-const COMPLETION_REVIEW_FALLBACK_MODEL = "openai-codex/gpt-5.6-luna" as const;
+const COMPLETION_REVIEW_FALLBACK_MODEL = "openai-codex/gpt-6-luna" as const;
 const SUPPORTED_COMPLETION_REVIEW_MODELS = new Set([
-  "openai-codex/gpt-5.6-luna",
-  "openai-codex/gpt-5.6-terra",
-  "openai-codex/gpt-5.6-sol",
+  "openai-codex/gpt-6-luna",
+  "openai-codex/gpt-6-sol",
 ]);
 
-export const COMPLETION_REVIEW_MODEL = "openai-codex/gpt-5.6-luna" as const;
+export const COMPLETION_REVIEW_MODEL = "openai-codex/gpt-6-luna" as const;
 export const COMPLETION_REVIEWER_ID = "background-subagent";
 
 export function resolveCompletionReviewModel(candidate: string): string {

@@ -17,10 +17,10 @@ test("packages portable whats-next skill with completion and approval guards", (
   assert.match(skill, /Re-read them after independent review/);
   assert.match(skill, /Fail closed/);
   assert.match(skill, /references\/harnesses\.md/);
-  assert.doesNotMatch(skill, /Terra|ask_user|On Pi|Pi:/);
+  assert.doesNotMatch(skill, /ask_user|On Pi|Pi:/);
   assert.match(
     root("skills/whats-next/references/harnesses.md"),
-    /tool-free Terra child/,
+    /tool-free Luna child/,
   );
   assert.match(skill, /exactly one explanatory multi-select/);
   assert.match(skill, /After selection, start its authorized work immediately/);

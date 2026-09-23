@@ -111,7 +111,7 @@ export async function requestOrchestratorClassification(
   const result = await service.run({
     title: "Classify TODO",
     cwd: ctx.cwd,
-    model: "openai-codex/gpt-5.6-luna",
+    model: "openai-codex/gpt-6-luna",
     reasoningEffort: "low",
     maxTurns: 1,
     timeoutMs: 20_000,

@@ -406,7 +406,7 @@ test("duplicate source items persist with merged identity and shared verificatio
       decision: "approved",
       feedback: "shared evidence verified",
       reviewerId: "reviewer",
-      model: "openai-codex/gpt-5.6-luna",
+      model: "openai-codex/gpt-6-luna",
     },
   );
   assert.equal(approved.tasks[1].status, "completed");
@@ -712,7 +712,7 @@ test("completion review drives verification, challenge, and automatic failure re
       decision: "rejected",
       feedback: "missing target proof",
       reviewerId: "reviewer",
-      model: "openai-codex/gpt-5.6-luna",
+      model: "openai-codex/gpt-6-luna",
     },
   );
   assert.equal(

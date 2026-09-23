@@ -48,7 +48,7 @@ Package contents:
 - `pi-orchestration`: required orchestration policy explaining how TODOs, jobs, workflows, subagents, and `grill-me` fit together
 - `orchestrator`: opt-in driver role for durable TODO planning, bounded delegation, concurrency gates, and evidence-based integration; moved from Nexus so the plugin is canonical
 - `ultrathink`: explicit `/ultrathink [task]` (or `$ultrathink`) mode for bounded multi-agent investigation, synthesis, implementation, and independent verification; without an argument it uses the current conversation task
-- `whats-next`: portable `/whats-next [focus]` or `$whats-next` skill reviews completed work; Pi's command uses one tool-free Terra subagent and presents material next steps through an explanatory `ask_user` multi-select
+- `whats-next`: portable `/whats-next [focus]` or `$whats-next` skill reviews completed work; Pi's command uses one tool-free Luna subagent and presents material next steps through an explanatory `ask_user` multi-select
 - `pi-like-gabo-reflect`: user-invoked reflection that can turn verified session friction into minimal, tested Pi Like Gabo code or skill improvements
 - `librarian`: source-backed open-source research with full-SHA GitHub permalinks
 - `thinking-shortcuts`: `Shift+Up` increases and `Shift+Down` decreases thinking level

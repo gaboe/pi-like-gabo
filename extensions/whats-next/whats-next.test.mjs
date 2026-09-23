@@ -64,7 +64,7 @@ function setup(run, tasks = []) {
       theme: { fg: (_color, value) => value },
       setStatus: (key, value) => statuses.push({ key, value }),
     },
-    model: { provider: "openai-codex", id: "gpt-5.6-sol" },
+    model: { provider: "openai-codex", id: "gpt-6-sol" },
     modelRegistry: {},
     isProjectTrusted: () => true,
     sessionManager: {
@@ -100,7 +100,7 @@ function setup(run, tasks = []) {
   };
 }
 
-test("runs exactly one tool-free Terra review and renders verified completion", async () => {
+test("runs exactly one tool-free Luna review and renders verified completion", async () => {
   const fixture = setup(
     async () => ({
       id: "sa-1",
@@ -119,7 +119,7 @@ test("runs exactly one tool-free Terra review and renders verified completion", 
     assert.equal(fixture.command.name, "whats-next");
     await fixture.command.handler(" release readiness ", fixture.ctx);
     assert.equal(fixture.requests.length, 1);
-    assert.equal(fixture.requests[0].model, "openai-codex/gpt-5.6-terra");
+    assert.equal(fixture.requests[0].model, "openai-codex/gpt-6-luna");
     assert.equal(fixture.requests[0].reasoningEffort, "low");
     assert.deepEqual(fixture.requests[0].allowedTools, []);
     assert.equal(fixture.requests[0].noExtensions, true);

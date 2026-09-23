@@ -57,8 +57,8 @@ describe("completion operational exhaustion", () => {
       COMPLETION_REVIEW_MODEL,
     );
     assert.equal(
-      resolveCompletionReviewModel("openai-codex/gpt-5.6-sol"),
-      "openai-codex/gpt-5.6-sol",
+      resolveCompletionReviewModel("openai-codex/gpt-6-sol"),
+      "openai-codex/gpt-6-sol",
     );
   });
 

@@ -77,7 +77,7 @@ test("Pi fixture completes and retains Pi backend metadata", async () => {
     const manager = await rt.runPromise(SubagentManager);
     const snap = await runTool(
       rt,
-      manager.spawn("pi", { ...task(), model: "openai-codex/gpt-5.6-luna" }),
+      manager.spawn("pi", { ...task(), model: "openai-codex/gpt-6-luna" }),
     );
     await runTool(rt, manager.waitFor([snap.id]));
     assert.equal(manager.view.get(snap.id)?.backend, "pi");

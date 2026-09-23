@@ -17,11 +17,10 @@ Do not use models from the Anthropic provider even if one appears in the model l
 
 Use only exact Pi provider/model IDs:
 
-| Model                        | Recommended use and effort                                                                   |
-| ---------------------------- | -------------------------------------------------------------------------------------------- |
-| `openai-codex/gpt-5.6-luna`  | focused scout/verifier `low`; broad exploration `medium`                                     |
-| `openai-codex/gpt-5.6-terra` | bounded, multi-file, or root-cause implementation `low`                                      |
-| `openai-codex/gpt-5.6-sol`   | routine review `low`; planning or complex synthesis `medium`; risk-triggered analysis `high`; genuinely difficult work may justify `xhigh` |
+| Model                     | Recommended use and effort                                                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `openai-codex/gpt-6-luna` | focused scout/verifier `low`; broad exploration or bounded, multi-file, or root-cause implementation `medium`                              |
+| `openai-codex/gpt-6-sol`  | routine review `low`; planning or complex synthesis `medium`; risk-triggered analysis `high`; genuinely difficult work may justify `xhigh` |
 
 For orchestrated work, always set model and effort explicitly. Omission inherits the parent and can accidentally fan out `high` or `xhigh` to routine workers.
 

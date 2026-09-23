@@ -204,7 +204,7 @@ const approvedReview = (token = "approved-review") => ({
   reviewedAt: 2,
   reviewer: {
     id: "background-subagent",
-    model: "openai-codex/gpt-5.6-luna",
+    model: "openai-codex/gpt-6-luna",
   },
 });
 
@@ -263,7 +263,7 @@ const completeAndApprove = (state, id) => {
       decision: "approved",
       feedback: "verified",
       reviewerId: "reviewer",
-      model: "openai-codex/gpt-5.6-luna",
+      model: "openai-codex/gpt-6-luna",
     },
   );
 };
@@ -356,7 +356,7 @@ describe("todo completion evidence", () => {
       decision: "approved",
       feedback: "Evidence matches the implementation.",
       reviewerId: "todo-completion-reviewer",
-      model: "openai-codex/gpt-5.6-luna",
+      model: "openai-codex/gpt-6-luna",
       reviewedAt: 3_000,
     });
     assert.equal(approved.tasks[0].review.status, "approved");
@@ -2103,7 +2103,7 @@ describe("todo completion evidence", () => {
       decision: "rejected",
       feedback: "Missing the requested Mermaid diagram.",
       reviewerId: "todo-completion-reviewer",
-      model: "openai-codex/gpt-5.6-luna",
+      model: "openai-codex/gpt-6-luna",
       reviewedAt: 3_000,
     });
     assert.equal(rejected.tasks[0].status, "pending");
@@ -2417,7 +2417,7 @@ describe("todo completion evidence", () => {
         decision: "approved",
         feedback: "Evidence matches.",
         reviewerId: "todo-completion-reviewer",
-        model: "openai-codex/gpt-5.6-luna",
+        model: "openai-codex/gpt-6-luna",
         reviewedAt: 3_000,
       },
     );
@@ -2467,7 +2467,7 @@ describe("todo completion evidence", () => {
       decision: "approved",
       feedback: "stale",
       reviewerId: "old-reviewer",
-      model: "openai-codex/gpt-5.6-luna",
+      model: "openai-codex/gpt-6-luna",
     });
     assert.equal(staleApproval, rescoped.state);
   });
@@ -2510,7 +2510,7 @@ describe("todo completion evidence", () => {
         decision: "approved",
         feedback: "verified",
         reviewerId: "reviewer",
-        model: "openai-codex/gpt-5.6-luna",
+        model: "openai-codex/gpt-6-luna",
         reviewedAt: 3_000,
       },
     );
@@ -6590,7 +6590,7 @@ describe("todo enrichment and scheduler", () => {
     }
   });
 
-  it("routes every TODO through one serialized Terra dossier and persists queued state first", async () => {
+  it("routes every TODO through one serialized Luna dossier and persists queued state first", async () => {
     __resetState();
     let command;
     const started = [];
@@ -6761,7 +6761,7 @@ describe("todo enrichment and scheduler", () => {
     assert.equal(getState().tasks[0].description, "Inspect parser behavior");
   });
 
-  it("uses Terra with web tools only for explicit external research and outcome dossier prompt", async () => {
+  it("uses Luna with web tools only for explicit external research and outcome dossier prompt", async () => {
     let request;
     const unregister = registerBackgroundSubagentService({
       async run(value) {
@@ -6788,7 +6788,7 @@ Recommendation: implement external DTO guards.`;
         analysisRoot: "current",
         analysisKind: "repository",
       });
-      assert.equal(request.model, "openai-codex/gpt-5.6-terra");
+      assert.equal(request.model, "openai-codex/gpt-6-luna");
       assert.equal(request.maxTurns, 12);
       assert.equal(request.timeoutMs, 180_000);
       assert.deepEqual(request.allowedTools, ["read", "bash"]);
@@ -6997,7 +6997,7 @@ Recommendation: implement external DTO guards.`;
     const unregister = registerBackgroundSubagentService({
       async run(value) {
         requests.push(value);
-        return value.model.includes("luna")
+        return !value.prompt.includes("Raw request (redacted, bounded):")
           ? { id: "reorder", status: "done", output: '{"order":[1,2]}' }
           : {
               id: "analysis",
@@ -7032,7 +7032,7 @@ Recommendation: implement external DTO guards.`;
         { revision: 1, candidateIds: [1, 2] },
         getState().tasks,
       );
-      assert.equal(requests[1].model, "openai-codex/gpt-5.6-luna");
+      assert.equal(requests[1].model, "openai-codex/gpt-6-luna");
       assert.equal(requests[1].reasoningEffort, "low");
       assert.equal(requests[1].maxTurns, 4);
       assert.deepEqual(requests[1].allowedTools, []);
@@ -9801,7 +9801,7 @@ Recommendation: implement external DTO guards.`;
       await flush();
 
       assert.equal(requests.length, 1);
-      assert.equal(requests[0].model, "openai-codex/gpt-5.6-luna");
+      assert.equal(requests[0].model, "openai-codex/gpt-6-luna");
       assert.equal(requests[0].cwd, canonicalReviewRoot);
       assert.equal(requests[0].parent.projectTrusted, false);
       assert.deepEqual(requests[0].allowedTools, []);

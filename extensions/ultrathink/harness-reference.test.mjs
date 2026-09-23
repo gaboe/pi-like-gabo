@@ -18,7 +18,7 @@ for (const name of ["orchestrator", "ultrathink", "whats-next"]) {
     assert.match(skill, /native worker|native reviewer/);
     assert.doesNotMatch(
       skill,
-      /`delegate`|subagent_|`jobs`|`todo|ask_user|Luna|Terra|Sol|pi-orchestration|Pi tools|\bPi\b/,
+      /`delegate`|subagent_|`jobs`|`todo|ask_user|Luna|Sol|pi-orchestration|Pi tools|\bPi\b/,
     );
     assert.match(reference, /## Pi/);
     assert.match(reference, /## Codex/);
@@ -32,7 +32,7 @@ test("orchestrator roles stay harness-neutral", () => {
   assert.match(roles, /Relative budget/);
   assert.doesNotMatch(
     roles,
-    /`delegate`|subagent_|`jobs`|`todo|ask_user|Luna|Terra|Sol|\bPi\b/,
+    /`delegate`|subagent_|`jobs`|`todo|ask_user|Luna|Sol|\bPi\b/,
   );
 });
 
@@ -44,8 +44,8 @@ test("Pi references preserve exact local routing and selector rejection", () => 
   assert.match(orchestrator, /subagent_spawn/);
   assert.match(orchestrator, /Model: use Luna/);
   assert.match(orchestrator, /Effort: choose independently/);
-  assert.match(ultrathink, /Terra low/);
-  assert.match(whatsNext, /tool-free Terra child/);
+  assert.match(ultrathink, /Luna medium/);
+  assert.match(whatsNext, /tool-free Luna child/);
   for (const reference of [orchestrator, ultrathink, whatsNext]) {
     assert.match(reference, /no `harness` selector/);
     assert.match(reference, /harness: "codex"/);
