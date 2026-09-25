@@ -7,7 +7,7 @@ Load only the active host section. Capability detection overrides examples.
 - Native worker: `subagent_spawn`; continuation/steering: `subagent_send`; collection: completion notifications or `subagent_wait` when needed.
 - Durable state: `todo`; bounded monitor: `jobs`; decision UI: `ask_user`.
 - Current in-process spawn schema has no `harness` selector. Never pass `harness`, `agent`, or `backend`.
-- Model: use Luna for scouts, deterministic verification, and precisely scoped low-risk implementation with an existing pattern and deterministic check; Luna medium for ambiguous root causes or broad/coupled implementation; Sol for domain decisions, review, synthesis, and consequential risk.
+- Model: use Luna for scouts, deterministic verification, and precisely scoped low-risk implementation with an existing pattern and deterministic check; Luna medium for ambiguous root causes or broad/coupled implementation; Astra for domain decisions, review, synthesis, and consequential risk.
 - Effort: choose independently—low for mechanical work, medium for multi-step reasoning, high only for genuinely difficult bounded work, and xhigh only after documented high-effort insufficiency. Capability detection overrides these examples.
 - Turn budgets: 8–12 narrow scout, 16–24 broad review/planning, 24–32 implementation, 32–48 only for one justified cohesive package. Reserve final two turns for handoff.
 - Package workers use `package_handoff`; parent owns semantic acceptance and Git/external mutations.
@@ -16,7 +16,7 @@ Load only the active host section. Capability detection overrides examples.
 
 - First-class adapter: pass `harness: "codex"` only when the active spawn schema exposes it; use that schema's lifecycle tools and model ids.
 - CLI fallback from another host: run `codex exec -C "$ROOT" -m <model> -s read-only -c 'model_reasoning_effort="<level>"' --json -o "$OUT" "$PROMPT"` in a background process. Require a non-empty prompt. Use `-s workspace-write` only for explicitly authorized local edits.
-- CLI models: `gpt-6-luna` for bounded lookup, implementation, and review; `gpt-6-sol` for complex reasoning; effort `low|medium|high|xhigh`.
+- CLI models: `gpt-6-luna` for bounded lookup, implementation, and review; `gpt-6-astra` for complex reasoning; effort `low|medium|high|xhigh`.
 - Persist the JSONL `thread_id`; resume with `codex exec ... resume <thread_id>`. Treat `turn.completed` as completion and `turn.failed` as failure.
 - Wall-clock defaults: 15 minutes review/analysis, 45 minutes implementation. Parent enforces timeout and approval boundaries.
 
