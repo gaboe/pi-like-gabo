@@ -1,7 +1,8 @@
 ---
 name: worker
-description: Drive a coding agent as a long-running implementation worker in a Herdr pane, and review its claims against receipts. Reach for it when the work is measured in files touched and build-test-fix iterations rather than in judgement calls - a mechanical port of a finished change into a sibling repo, a long green loop, a bounded refactor across many call sites - and when an existing worker needs continuing or checking, or several must be fanned out in parallel and their results joined. Requires HERDR_ENV=1.
-argument-hint: "Worker profile (luna) and the task, or empty to continue an existing worker"
+description: Drive a coding agent through one bounded implementation deliverable in a Herdr pane, and review its claims against receipts.
+argument-hint: "Worker profile (luna) and the bounded deliverable, or empty for an immediate fix or re-review"
+disable-model-invocation: true
 ---
 
 # worker
@@ -282,15 +283,13 @@ same span side by side, report wall-clock each, and say which you would ship" be
 
 ## Continuing, and knowing when to stop
 
-Accumulated context is the expensive part, so **related work continues in the same worker** — the one
-that just fixed the window planner already knows why the windows are measured in audio seconds. Reuse
-the name and keep going.
+**Bounded deliverables are the default.** Give each worker one bounded deliverable, then close it when
+that deliverable passes the driver's gate. Start a fresh worker for a new review point or materially
+new change. Reuse the same worker only for an immediate fix or re-review of its own slice, when its
+accumulated context is evidence for that exact slice.
 
-**Unrelated work gets a new agent.** A worker holding a hundred thousand tokens about one subsystem is
-worse than empty for a different problem: you pay for all of it on every turn, and it carries
-assumptions from the old task into the new one, confidently. When the subject genuinely changes, close
-that worker and start a fresh one. The test is whether the accumulated context would be *evidence* or
-*noise* for what comes next.
+For a slice that needs repair, send the immediate fix and its re-review back to the worker that wrote
+it. Keep that worker open until the slice passes the join, then close it.
 
 **Run several at once when the work is genuinely parallel.** Separate subsystems, separate panes,
 separate names — `luna-ingest` and `luna-tui` do not need to wait for each other. Decide the shape
@@ -334,15 +333,9 @@ the exact moment the join needs it, and hands the repair to whoever happens to b
 
 Close the panes and agents you created once their work is done.
 
-**Sweep idle panes as part of every gate, not once at the end.** After each result you accept, ask
-of every idle agent: is there a next task where its accumulated context is *evidence*, or would it
-be *noise*? Keep the ones whose subsystem still has work — the agent that just moved six vias
-should move the other three. Close the rest. An agent whose subsystem is finished is not free to
-keep: it holds a unique name you may want, occupies a pane, and invites the mistake of handing it
-unrelated work because it happens to be idle.
-
-A rough rule that has held: keep at most one idle agent per live subsystem, and close any agent
-whose deliverable you have already gated and committed.
+**Sweep idle panes as part of every gate, not once at the end.** Keep a worker only for an
+immediate fix or re-review of its own slice. Close it when that slice passes the join. Start a
+fresh worker for a new deliverable, including one in the same subsystem.
 
 Closing is a two-step with a confirmation, because there is no `agent stop`:
 
