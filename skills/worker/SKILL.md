@@ -111,8 +111,9 @@ Reply-to: <driver-agent-name>
 ```
 
 Put the callback rule below in the seed itself; the worker cannot infer it from this driver-side
-skill. When work reaches `done`, `partial`, `blocked`, or `failed`, the worker sends one asynchronous
-result prompt to that reply target before settling:
+skill. When work reaches `done`, `partial`, `blocked`, or `failed`, the worker first finishes its work
+record with a last line `RESULT: <status>`, then sends one asynchronous result prompt to that reply
+target before settling:
 
 ```bash
 herdr agent prompt <driver-agent-name> "[worker-result]
@@ -127,6 +128,12 @@ Reply-to: <worker-agent-name>"
 Use no `--wait`: this is a handoff notification, not worker acceptance of the orchestrator's next
 turn. The result prompt supplements the required work record; it does not replace receipts or the
 driver's gate.
+
+The result prompt is a doorbell and it can fail to ring. A Codex worker's sandbox refused the Herdr
+socket with `PermissionDenied: Operation not permitted` on its third callback after two had gone
+through, and nothing woke the driver: the worker sat `idle` with a finished record while the user
+read it as a hang. The record's `RESULT:` line is the delivery, so seed one attempt and no retry, and
+watch for that line as described below.
 
 ## Two planes
 
@@ -154,6 +161,20 @@ Codex, or another recognized kind.
 Completion criterion: the harness wakes the driver with a terminal monitor event and captured output
 or artifact location. Then inspect work record, current diff, and decisive receipts before accepting
 the worker's claims.
+
+Wake on the first of two signals, since either can be the only one that arrives: the `RESULT:` line
+in the work record, or the agent leaving `working`.
+
+```bash
+until grep -q '^RESULT:' "$record" 2>/dev/null \
+  || herdr agent get "$name" 2>&1 | grep -qE '"agent_status":"(idle|blocked)"|agent_not_found'; do
+  sleep 15
+done; tail -3 "$record"
+```
+
+Bound it by the harness's background-task limit, not a shorter `agent wait --timeout`: a timeout
+shorter than the task returns `{"error":{"code":"timeout"}}` with exit 0 and wakes the driver to a
+worker that is still busy.
 
 **`idle` right after a dispatch means the prompt never ran.** `agent prompt` pastes the text and the
 first enter after a paste regularly does not register, so the pane sits on `[Pasted Content N chars]`
