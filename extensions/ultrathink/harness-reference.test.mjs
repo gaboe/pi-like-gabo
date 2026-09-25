@@ -9,7 +9,7 @@ const root = (path) =>
     "utf8",
   );
 
-for (const name of ["orchestrator", "ultrathink", "whats-next"]) {
+for (const name of ["orchestrator", "whats-next"]) {
   test(`${name} keeps portable policy neutral and host details in its reference`, () => {
     const skill = root(`skills/${name}/SKILL.md`);
     const reference = root(`skills/${name}/references/harnesses.md`);
@@ -26,6 +26,16 @@ for (const name of ["orchestrator", "ultrathink", "whats-next"]) {
   });
 }
 
+test("ultrathink uses the orchestrator delegation contract", () => {
+  const skill = root("skills/ultrathink/SKILL.md");
+  assert.match(skill, /`orchestrator` skill owns the delegation contract/);
+  assert.match(
+    skill,
+    /Load it before the first spawn, including its harness mappings/,
+  );
+  assert.doesNotMatch(skill, /references\/harnesses\.md/);
+});
+
 test("orchestrator roles stay harness-neutral", () => {
   const roles = root("skills/orchestrator/roles.md");
   assert.match(roles, /Model class/);
@@ -38,15 +48,13 @@ test("orchestrator roles stay harness-neutral", () => {
 
 test("Pi references preserve exact local routing and selector rejection", () => {
   const orchestrator = root("skills/orchestrator/references/harnesses.md");
-  const ultrathink = root("skills/ultrathink/references/harnesses.md");
   const whatsNext = root("skills/whats-next/references/harnesses.md");
 
   assert.match(orchestrator, /subagent_spawn/);
   assert.match(orchestrator, /Model: use Luna/);
   assert.match(orchestrator, /Effort: choose independently/);
-  assert.match(ultrathink, /Luna medium/);
   assert.match(whatsNext, /tool-free Luna child/);
-  for (const reference of [orchestrator, ultrathink, whatsNext]) {
+  for (const reference of [orchestrator, whatsNext]) {
     assert.match(reference, /no `harness` selector/);
     assert.match(reference, /harness: "codex"/);
     assert.match(reference, /codex exec/);
