@@ -58,6 +58,13 @@ Split a pane first (right for a wide caller, down for a narrow one), pass `--no-
 worker's directory with `--cwd` on `herdr pane split`. `agent start` has no such flag and answers
 `unknown option: --cwd`.
 
+Split only while the pane stays tall. A fifth stacked split left a Codex pane too short to draw its
+banner or footer: `agent prompt` exited 0, the pane showed an empty `›` input, the agent read
+`working`, and the prompt was gone. From the third worker on, start it in its own tab
+(`herdr tab create --workspace <id> --cwd <dir>`). Before the first prompt, wait until the footer
+shows the pinned model, for example `GPT-6-Astra high · <cwd>`. While the banner still reads
+`model: loading`, a prompt is dropped the same silent way.
+
 **Start the worker in the root repository, never in a child checkout.** In a meta-repo the work lands
 in the submodules, but the root is where it is *seen*: from `nexus/` one worker reads `nexus-be/` and
 `docs/` in a single tree, the root skills and permissions apply, and `git status` shows the submodule
@@ -182,6 +189,12 @@ with the agent `idle` — and a monitor that treats `idle` as terminal fires wit
 as "finished". Require the status to reach `working` once before you accept `idle` as done, and when
 `idle` arrives that fast, read the pane instead of the report. `herdr agent send-keys <name> enter`,
 twice, submits what is sitting there.
+
+**`blocked` usually means the worker is asking a question.** A Codex question dialog blocks the turn
+and shows `⌥+↑ to answer`. A text prompt sent meanwhile only queues behind the dialog. Answer it on the
+control plane: `herdr agent send-keys <name> alt+up`, read the highlighted option, then send `enter`.
+Wake the driver on `blocked` as well as on the `RESULT:` line, otherwise a waiting worker looks like a
+slow one.
 
 A monitor also earns a **stall** branch: while the status says `working`, compare the pane's output
 size between polls and report when it has not moved for ten minutes. That is the shape that catches a
