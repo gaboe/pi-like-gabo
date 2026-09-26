@@ -17,6 +17,12 @@ touched and iterations survived; keep what is measured in judgement calls.
 `orchestrator` owns the **seed contract** — budgets, phases, scope, permissions — and applies here
 unchanged. This skill owns the other half: what a worker must hand back, and how you check it.
 
+**Human-review bridge:** A review suggestion is a hypothesis, not an implementation seed. The
+orchestrator may seed an implementation worker only from the human-review Wave packet, after its
+critical verification records an evidence-backed disposition and consolidated execution approval
+covers that worker's exact scope. The human-review skill owns those verification and approval rules;
+raw review text and handoff summaries do not authorize implementation.
+
 Mechanics live in the `herdr` skill and in `herdr agent --help`. Read those for pane and agent
 commands rather than a copy here.
 
