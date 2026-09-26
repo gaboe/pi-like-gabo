@@ -64,6 +64,13 @@ Split a pane first (right for a wide caller, down for a narrow one), pass `--no-
 worker's directory with `--cwd` on `herdr pane split`. `agent start` has no such flag and answers
 `unknown option: --cwd`.
 
+Split only while the pane stays tall. A fifth stacked split left a Codex pane too short to draw its
+banner or footer: `agent prompt` exited 0, the pane showed an empty `›` input, the agent read
+`working`, and the prompt was gone. From the third worker on, start it in its own tab
+(`herdr tab create --workspace <id> --cwd <dir>`). Before the first prompt, wait until the footer
+shows the pinned model, for example `GPT-6-Astra high · <cwd>`. While the banner still reads
+`model: loading`, a prompt is dropped the same silent way.
+
 **Start the worker in the root repository, never in a child checkout.** In a meta-repo the work lands
 in the submodules, but the root is where it is *seen*: from `nexus/` one worker reads `nexus-be/` and
 `docs/` in a single tree, the root skills and permissions apply, and `git status` shows the submodule
@@ -117,8 +124,9 @@ Reply-to: <driver-agent-name>
 ```
 
 Put the callback rule below in the seed itself; the worker cannot infer it from this driver-side
-skill. When work reaches `done`, `partial`, `blocked`, or `failed`, the worker sends one asynchronous
-result prompt to that reply target before settling:
+skill. When work reaches `done`, `partial`, `blocked`, or `failed`, the worker first finishes its work
+record with a last line `RESULT: <status>`, then sends one asynchronous result prompt to that reply
+target before settling:
 
 ```bash
 herdr agent prompt <driver-agent-name> "[worker-result]
@@ -133,6 +141,12 @@ Reply-to: <worker-agent-name>"
 Use no `--wait`: this is a handoff notification, not worker acceptance of the orchestrator's next
 turn. The result prompt supplements the required work record; it does not replace receipts or the
 driver's gate.
+
+The result prompt is a doorbell and it can fail to ring. A Codex worker's sandbox refused the Herdr
+socket with `PermissionDenied: Operation not permitted` on its third callback after two had gone
+through, and nothing woke the driver: the worker sat `idle` with a finished record while the user
+read it as a hang. The record's `RESULT:` line is the delivery, so seed one attempt and no retry, and
+watch for that line as described below.
 
 ## Two planes
 
@@ -161,12 +175,32 @@ Completion criterion: the harness wakes the driver with a terminal monitor event
 or artifact location. Then inspect work record, current diff, and decisive receipts before accepting
 the worker's claims.
 
+Wake on the first of two signals, since either can be the only one that arrives: the `RESULT:` line
+in the work record, or the agent leaving `working`.
+
+```bash
+until grep -q '^RESULT:' "$record" 2>/dev/null \
+  || herdr agent get "$name" 2>&1 | grep -qE '"agent_status":"(idle|blocked)"|agent_not_found'; do
+  sleep 15
+done; tail -3 "$record"
+```
+
+Bound it by the harness's background-task limit, not a shorter `agent wait --timeout`: a timeout
+shorter than the task returns `{"error":{"code":"timeout"}}` with exit 0 and wakes the driver to a
+worker that is still busy.
+
 **`idle` right after a dispatch means the prompt never ran.** `agent prompt` pastes the text and the
 first enter after a paste regularly does not register, so the pane sits on `[Pasted Content N chars]`
 with the agent `idle` — and a monitor that treats `idle` as terminal fires within the minute and reads
 as "finished". Require the status to reach `working` once before you accept `idle` as done, and when
 `idle` arrives that fast, read the pane instead of the report. `herdr agent send-keys <name> enter`,
 twice, submits what is sitting there.
+
+**`blocked` usually means the worker is asking a question.** A Codex question dialog blocks the turn
+and shows `⌥+↑ to answer`. A text prompt sent meanwhile only queues behind the dialog. Answer it on the
+control plane: `herdr agent send-keys <name> alt+up`, read the highlighted option, then send `enter`.
+Wake the driver on `blocked` as well as on the `RESULT:` line, otherwise a waiting worker looks like a
+slow one.
 
 A monitor also earns a **stall** branch: while the status says `working`, compare the pane's output
 size between polls and report when it has not moved for ten minutes. That is the shape that catches a

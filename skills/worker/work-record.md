@@ -29,7 +29,12 @@ Fixed headings, terse, under a screen.
 
 ## Remember
 - <lesson that outlives this task, or drop the section>
+
+RESULT: <done|partial|blocked|failed>
 ```
+
+Write the `RESULT:` line last, once the record is final. The driver wakes on it; a result prompt to the
+driver is only a doorbell and may never arrive.
 
 Every Verified line carries its command; a claim without one belongs under Not verified.
 
