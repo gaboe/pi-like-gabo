@@ -2,7 +2,6 @@
 name: worker
 description: Drive a coding agent through one bounded implementation deliverable in a Herdr pane, and review its claims against receipts.
 argument-hint: "Worker profile (luna) and the bounded deliverable, or empty for an immediate fix or re-review"
-disable-model-invocation: true
 ---
 
 # worker
